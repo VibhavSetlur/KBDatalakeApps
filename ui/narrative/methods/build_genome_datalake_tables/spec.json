@@ -1,0 +1,86 @@
+{
+    "ver": "0.0.1",
+    "authors": [
+        "chenry"
+    ],
+    "contact": "chenry@anl.gov",
+    "categories": ["active"],
+    "widgets": {
+        "input": null,
+        "output": "kbaseReportView"
+    },
+    "parameters": [
+        {
+            "id": "input_refs",
+            "optional": false,
+            "advanced": false,
+            "allow_multiple": true,
+            "default_values": [""],
+            "field_type": "text",
+            "text_options": {
+                "valid_ws_types": ["KBaseGenomes.Genome", "KBaseSets.GenomeSet"]
+            }
+        },
+        {
+            "id": "suffix",
+            "optional": true,
+            "advanced": false,
+            "allow_multiple": false,
+            "default_values": [""],
+            "field_type": "text",
+            "text_options": {
+                "valid_ws_types": []
+            }
+        },
+        {
+            "id": "save_models",
+            "optional": true,
+            "advanced": false,
+            "allow_multiple": false,
+            "default_values": ["0"],
+            "field_type": "checkbox",
+            "checkbox_options": {
+                "checked_value": 1,
+                "unchecked_value": 0
+            }
+        }
+    ],
+    "behavior": {
+        "service-mapping": {
+            "url": "",
+            "name": "KBDatalakeApps",
+            "method": "build_genome_datalake_tables",
+            "input_mapping": [
+                {
+                    "narrative_system_variable": "workspace",
+                    "target_property": "workspace_name"
+                },
+                {
+                    "input_parameter": "input_refs",
+                    "target_property": "input_refs",
+                    "target_type_transform": "resolved-ref"
+                },
+                {
+                    "input_parameter": "suffix",
+                    "target_property": "suffix"
+                },
+                {
+                    "input_parameter": "save_models",
+                    "target_property": "save_models",
+                    "target_type_transform": "int"
+                }
+            ],
+            "output_mapping": [
+                {
+                    "service_method_output_path": [0, "report_name"],
+                    "target_property": "report_name"
+                },
+                {
+                    "service_method_output_path": [0, "report_ref"],
+                    "target_property": "report_ref"
+                }
+            ]
+        }
+    },
+    "job_id_output_field": "docker"
+}

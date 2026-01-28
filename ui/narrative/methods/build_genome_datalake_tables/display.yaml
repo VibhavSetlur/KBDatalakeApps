@@ -1,0 +1,79 @@
+#
+# Define display information for the build_genome_datalake_tables method
+#
+name: Build Genome Datalake Tables
+
+tooltip: |
+    Build datalake tables from Genome or GenomeSet objects
+
+screenshots: []
+
+icon: icon.png
+
+#
+# Define related apps
+#
+suggestions:
+    apps:
+        related: []
+        next: []
+
+#
+# Configure parameter display
+#
+parameters:
+    input_refs:
+        ui-name: |
+            Genome(s) or GenomeSet(s)
+        short-hint: |
+            Select one or more Genome or GenomeSet objects
+        long-hint: |
+            Select the Genome or GenomeSet objects from your workspace that you want
+            to use for building datalake tables. You can select multiple objects.
+
+    suffix:
+        ui-name: |
+            Table Name Suffix
+        short-hint: |
+            Optional suffix to append to generated table names
+        long-hint: |
+            Enter a suffix string that will be appended to the names of the generated
+            datalake tables. This helps distinguish different table sets.
+
+    save_models:
+        ui-name: |
+            Save Generated Models
+        short-hint: |
+            Save the generated models to the workspace
+        long-hint: |
+            Check this box to save any models generated during the table building
+            process to your workspace. Leave unchecked to only generate the tables
+            without saving intermediate models.
+
+description: |
+    <p>This app builds datalake tables from Genome or GenomeSet objects in your
+    workspace. The tables can be used for downstream analysis and querying.</p>
+
+    <p><strong>Input Objects:</strong></p>
+    <ul>
+        <li><strong>Genome</strong> - Individual annotated genome objects</li>
+        <li><strong>GenomeSet</strong> - Collections of genome objects</li>
+    </ul>
+
+    <p><strong>Options:</strong></p>
+    <ul>
+        <li><strong>Table Name Suffix</strong> - Optional string to append to table names
+            for identification purposes</li>
+        <li><strong>Save Generated Models</strong> - Whether to save any intermediate
+            models generated during the process</li>
+    </ul>
+
+    <p><strong>Usage:</strong></p>
+    <ol>
+        <li>Select one or more Genome or GenomeSet objects from your workspace</li>
+        <li>Optionally enter a suffix for the generated table names</li>
+        <li>Choose whether to save generated models</li>
+        <li>Run the app to build the datalake tables</li>
+    </ol>
+
+publications: []
