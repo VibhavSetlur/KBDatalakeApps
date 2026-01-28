@@ -4,10 +4,10 @@ import logging
 import os
 
 from installed_clients.KBaseReportClient import KBaseReport
+from installed_clients.DataFileUtilClient import DataFileUtil
 
 # Import KBUtilLib utilities for common functionality
 from kbutillib import KBWSUtils, KBCallbackUtils, SharedEnvUtils
-
 
 class DatalakeAppUtils(KBWSUtils, KBCallbackUtils, SharedEnvUtils):
     """Custom utility class combining KBUtilLib modules for datalake operations."""
@@ -59,6 +59,7 @@ Author: chenry
         self.logger = logging.getLogger(__name__)
 
         # Initialize KBUtilLib utilities
+        self.dfu = DataFileUtil(self.callback_url)
         self.utils = DatalakeAppUtils(callback_url=self.callback_url)
         #END_CONSTRUCTOR
         pass
@@ -109,13 +110,31 @@ Author: chenry
 
         # Create report with results
         report_client = KBaseReport(self.callback_url)
-        report_info = report_client.create({
-            'report': {
-                'objects_created': [],
-                'text_message': results_text
-            },
-            'workspace_name': workspace_name
-        })
+
+        shock_id = self.dfu.file_to_shock({
+            'file_path': '/kb/module/data/html',
+            'pack': 'zip'
+        })['shock_id']
+
+        html_report = [{
+            'shock_id': shock_id,
+            'name': 'index.html',
+            'label': 'BERDL Tables',
+            'description': 'BERDL Table Viewer'
+        }]
+
+        report_params = {
+            'message': 'message_in_app hi!',
+            'warnings': ['example warning'],
+            'workspace_name': params['workspace_name'],
+            'objects_created': [],
+            'html_links': html_report,
+            'direct_html_link_index': 0,
+            # 'html_window_height': int(params['report_height']),
+            'html_window_height': 800,
+        }
+
+        report_info = report_client.create_extended_report(report_params)
 
         output = {
             'report_name': report_info['name'],
