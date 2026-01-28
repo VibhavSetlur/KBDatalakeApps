@@ -2,6 +2,7 @@
 #BEGIN_HEADER
 import logging
 import os
+import uuid
 
 from installed_clients.KBaseReportClient import KBaseReport
 from installed_clients.DataFileUtilClient import DataFileUtil
@@ -111,10 +112,20 @@ Author: chenry
         # Create report with results
         report_client = KBaseReport(self.callback_url)
 
+        output_directory = os.path.join(self.shared_folder, str(uuid.uuid4()))
+        shutil.copytree('/kb/module/data/html', output_directory)
+
         shock_id = self.dfu.file_to_shock({
-            'file_path': '/kb/module/data/html',
+            'file_path': output_directory,
             'pack': 'zip'
         })['shock_id']
+
+        import os
+        print(os.listdir('/kb/module/data/html'))
+        print(output_directory)
+        print(os.listdir(output_directory))
+        print(shock_id)
+        
 
         html_report = [{
             'shock_id': shock_id,
