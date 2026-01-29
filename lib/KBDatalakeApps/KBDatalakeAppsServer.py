@@ -338,10 +338,6 @@ class Application(object):
         self.serverlog.set_log_level(6)
         self.rpc_service = JSONRPCServiceCustom()
         self.method_authentication = dict()
-        self.rpc_service.add(impl_KBDatalakeApps.run_datalake_query,
-                             name='KBDatalakeApps.run_datalake_query',
-                             types=[dict])
-        self.method_authentication['KBDatalakeApps.run_datalake_query'] = 'required'  # noqa
         self.rpc_service.add(impl_KBDatalakeApps.build_genome_datalake_tables,
                              name='KBDatalakeApps.build_genome_datalake_tables',
                              types=[dict])

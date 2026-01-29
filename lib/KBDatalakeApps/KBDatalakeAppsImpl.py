@@ -38,8 +38,8 @@ Author: chenry
     # the latter method is running.
     ######################################### noqa
     VERSION = "0.0.1"
-    GIT_URL = ""
-    GIT_COMMIT_HASH = "2a5dfea09a16a3714da61c9e3b9e341dc85fdc72"
+    GIT_URL = "git@github.com:kbaseapps/KBDatalakeApps.git"
+    GIT_COMMIT_HASH = "38ab5c13d23b7876d213dbc747d958806a775883"
 
     #BEGIN_CLASS_HEADER
     def _validate_params(self, params, required_keys):
@@ -65,6 +65,7 @@ Author: chenry
         #self.utils = DatalakeAppUtils(callback_url=self.callback_url)
         #END_CONSTRUCTOR
         pass
+
 
     def build_genome_datalake_tables(self, ctx, params):
         """
