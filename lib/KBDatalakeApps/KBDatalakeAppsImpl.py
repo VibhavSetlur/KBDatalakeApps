@@ -61,8 +61,8 @@ Author: chenry
         return os.environ.get('KBASE_SECURE_CONFIG_PARAM_kbaselakehouseserviceaccount_token')
 
     @staticmethod
-    def run_genome_pipeline():
-        cmd = ["/kb/module/scripts/run_genome_pipeline.sh"]
+    def run_genome_pipeline(input_file):
+        cmd = ["/kb/module/scripts/run_genome_pipeline.sh", str(input_file)]
         process = subprocess.Popen(
             cmd,
             stdout=None,  # inherit parent stdout
@@ -131,22 +131,22 @@ Author: chenry
             _params['_ctx'] = ctx
             _params['_config'] = self.config
 
-            print('to create a copy for debug:', _params)
+            #print('to create a copy for debug:', _params)
 
             fh.write(json.dumps(_params))
 
-        print(os.environ)
-        print('ctx', ctx)
-        print('contig', self.config)
+        #print(os.environ)
+        #print('ctx', ctx)
+        #print('contig', self.config)
         print('data dir')
         print(os.listdir('/data'))
         if os.path.exists('/data') and os.path.exists('/data/reference_data'):
             print(os.listdir('/data/reference_data'))
 
+        self.run_genome_pipeline(input_params.resolve())
 
-
-        print('BERDL Token')
-        print(self.get_berdl_token())
+        #print('BERDL Token')
+        #print(self.get_berdl_token())
 
         # Validate required parameters
         self._validate_params(params, ['input_refs', 'workspace_name'])
