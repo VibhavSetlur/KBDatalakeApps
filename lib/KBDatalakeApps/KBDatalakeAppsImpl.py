@@ -7,6 +7,9 @@ import shutil
 
 from installed_clients.KBaseReportClient import KBaseReport
 from installed_clients.DataFileUtilClient import DataFileUtil
+from installed_clients.kb_baktaClient import kb_bakta
+from installed_clients.kb_psortbClient import kb_psortb
+from installed_clients.kb_kofamClient import kb_kofam
 
 from cobrakbase import KBaseAPI
 
@@ -70,6 +73,9 @@ Author: chenry
         # Initialize KBUtilLib utilities
         self.dfu = DataFileUtil(self.callback_url)
         self.kbase_api = KBaseAPI(os.environ['KB_AUTH_TOKEN'], config=config)
+        self.kb_bakta = kb_bakta(self.callback_url)
+        self.kb_psortb = kb_psortb(self.callback_url)
+        self.kb_kofam = kb_kofam(self.callback_url)
         #self.utils = DatalakeAppUtils(callback_url=self.callback_url)
         #END_CONSTRUCTOR
         pass
