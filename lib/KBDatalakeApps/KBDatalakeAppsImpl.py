@@ -94,6 +94,12 @@ Author: chenry
         #BEGIN build_genome_datalake_tables
         self.logger.info(f"Building genome datalake tables with params: {params}")
 
+        print('data dir')
+        print(os.listdir('/data'))
+
+        print('env keys')
+        print(os.environ.keys())
+
         # Validate required parameters
         self._validate_params(params, ['input_refs', 'workspace_name'])
 
@@ -114,17 +120,7 @@ Author: chenry
                 pass
                 #raise ValueError('')
 
-        # Process the input references
-        results_text = f"Building genome datalake tables.\n"
-        results_text += f"Input references: {len(input_refs)} object(s)\n"
-        results_text += f"Suffix: {suffix if suffix else '(none)'}\n"
-        results_text += f"Save models: {'Yes' if save_models else 'No'}\n\n"
 
-        # TODO: Implement actual table building logic here
-        # For now, just list the input refs
-        results_text += "Input objects:\n"
-        for ref in input_refs:
-            results_text += f"  - {ref}\n"
 
         # Create KBaseFBA.GenomeDataLakeTables
 
