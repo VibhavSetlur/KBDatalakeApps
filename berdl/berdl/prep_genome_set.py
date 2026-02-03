@@ -55,7 +55,7 @@ class BERDLPreGenome:
 
     def get_genome_assembly(self, g):
         assembly = self.kbase.get_from_ws(g.assembly_ref)
-        handle_local_path = f'/storage/fliu/data/kbase/handle/{assembly.fasta_handle_ref}'
+        handle_local_path = f'/tmp/{assembly.fasta_handle_ref}'
         if not os.path.exists(handle_local_path):
             print('fetch from kbase')
             self.kbase.download_file_from_kbase2(assembly.fasta_handle_ref, handle_local_path)
@@ -95,34 +95,46 @@ class BERDLPreGenome:
         df_ani_phenotype = _read_search_output_as_parquet(self.paths.ani_phenotypes_out).to_pandas()
         return df_ani_clade, df_ani_fitness, df_ani_phenotype
 
+    @staticmethod
+    def t_ncbi_to_gtdb_id(s):
+        a = s.split('_')
+        if s.startswith('GCA'):
+            return f'GB_{a[0]}_{a[1]}'
+        elif s.startswith('GCF'):
+            return f'RS_{a[0]}_{a[1]}'
+
+    @staticmethod
+    def ani_transform(df, fn_q_transform, fn_r_transform):
+        query_to_ref = {}
+        for row_id, d in df.iterrows():
+            q = fn_q_transform(d['Query_file'])
+            r = fn_r_transform(d['Ref_file'])
+            if q not in query_to_ref:
+                query_to_ref[q] = {}
+            query_to_ref[q][r] = [d['ANI'], d['Align_fraction_ref'], d['Align_fraction_query']]
+        return query_to_ref
+
+    def ani_translate_clade(self, df, assembly_to_user_id):
+        def q_transform(s):
+            return assembly_to_user_id[s.split('/')[-1]]
+
+        def r_transform(s):
+            return self.t_ncbi_to_gtdb_id(s.split('/')[-1].rsplit('_', 1)[0])
+
+        ani_clades = self.ani_transform(df, q_transform, r_transform)
+        return ani_clades
+
     def run(self, genomes: list):
         user_genome_files = self.pre_user_genomes(genomes)
         df_ani_clade, df_ani_fitness, df_ani_phenotype = self.run_ani_databases()
 
         assembly_to_user_id = {v[0]: k for k, v in user_genome_files.items()}
 
-        def t_ncbi_to_gtdb_id(s):
-            a = s.split('_')
-            if s.startswith('GCA'):
-                return f'GB_{a[0]}_{a[1]}'
-            elif s.startswith('GCF'):
-                return f'RS_{a[0]}_{a[1]}'
-
         def q_transform(s):
             return assembly_to_user_id[s.split('/')[-1]]
 
         def r_transform(s):
-            return t_ncbi_to_gtdb_id(s.split('/')[-1].rsplit('_', 1)[0])
-
-        def ani_transform(df, fn_q_transform, fn_r_transform):
-            query_to_ref = {}
-            for row_id, d in df.iterrows():
-                q = fn_q_transform(d['Query_file'])
-                r = fn_r_transform(d['Ref_file'])
-                if q not in query_to_ref:
-                    query_to_ref[q] = {}
-                query_to_ref[q][r] = [d['ANI'], d['Align_fraction_ref'], d['Align_fraction_query']]
-            return query_to_ref
+            return self.t_ncbi_to_gtdb_id(s.split('/')[-1].rsplit('_', 1)[0])
 
         def match_top_clade(ani_clades):
             top_matches = {}
@@ -134,10 +146,10 @@ class BERDLPreGenome:
 
             return top_matches
 
-        ani_clades = ani_transform(df_ani_clade, q_transform, r_transform)
+        ani_clades = self.ani_translate_clade(df_ani_clade, assembly_to_user_id)
         user_to_clade = match_top_clade(ani_clades)
 
         with open(self.paths.json_user_to_clade, 'w') as fh:
             fh.write(json.dumps(user_to_clade))
 
-        return user_to_clade, df_ani_clade, df_ani_fitness, df_ani_phenotype
+        return user_to_clade, ani_clades, df_ani_fitness, df_ani_phenotype

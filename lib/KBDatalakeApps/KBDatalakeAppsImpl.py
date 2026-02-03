@@ -1,12 +1,18 @@
 # -*- coding: utf-8 -*-
 #BEGIN_HEADER
+import json
 import logging
 import os
 import uuid
+from pathlib import Path
 import shutil
+import subprocess
 
 from installed_clients.KBaseReportClient import KBaseReport
 from installed_clients.DataFileUtilClient import DataFileUtil
+from installed_clients.kb_baktaClient import kb_bakta
+from installed_clients.kb_psortbClient import kb_psortb
+from installed_clients.kb_kofamClient import kb_kofam
 
 from cobrakbase import KBaseAPI
 
@@ -41,7 +47,7 @@ Author: chenry
     ######################################### noqa
     VERSION = "0.0.1"
     GIT_URL = "git@github.com:kbaseapps/KBDatalakeApps.git"
-    GIT_COMMIT_HASH = "38ab5c13d23b7876d213dbc747d958806a775883"
+    GIT_COMMIT_HASH = "57ad9974af809ff24506351db02203a0481358e4"
 
     #BEGIN_CLASS_HEADER
     def _validate_params(self, params, required_keys):
@@ -53,6 +59,27 @@ Author: chenry
     @staticmethod
     def get_berdl_token():
         return os.environ.get('KBASE_SECURE_CONFIG_PARAM_kbaselakehouseserviceaccount_token')
+
+    @staticmethod
+    def run_genome_pipeline(input_file):
+        cmd = ["/kb/module/scripts/run_genome_pipeline.sh", str(input_file)]
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = "/opt/env/berdl_genomes/lib/python3.10/site-packages"
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=None,  # inherit parent stdout
+            stderr=None,  # inherit parent stderr
+            text=True,
+            env=env
+        )
+
+        returncode = process.wait()
+        if returncode != 0:
+            raise RuntimeError(
+                f"Genome pipeline failed with exit code {returncode}"
+            )
 
     #END_CLASS_HEADER
 
@@ -70,6 +97,9 @@ Author: chenry
         # Initialize KBUtilLib utilities
         self.dfu = DataFileUtil(self.callback_url)
         self.kbase_api = KBaseAPI(os.environ['KB_AUTH_TOKEN'], config=config)
+        self.kb_bakta = kb_bakta(self.callback_url)
+        self.kb_psortb = kb_psortb(self.callback_url)
+        self.kb_kofam = kb_kofam(self.callback_url)
         #self.utils = DatalakeAppUtils(callback_url=self.callback_url)
         #END_CONSTRUCTOR
         pass
@@ -99,20 +129,36 @@ Author: chenry
         #BEGIN build_genome_datalake_tables
         self.logger.info(f"Building genome datalake tables with params: {params}")
 
+        input_params = Path(self.shared_folder) / 'input_params.json'
+        print(str(input_params.resolve()))
+        with open(str(input_params.resolve()), 'w') as fh:
+            _params = dict(params)
+            _params['_ctx'] = ctx
+            _params['_config'] = self.config
+
+            print('to create a copy for debug:', _params)
+
+            fh.write(json.dumps(_params))
+
+        print(os.environ)
+        #print('ctx', ctx)
+        #print('contig', self.config)
         print('data dir')
         print(os.listdir('/data'))
         if os.path.exists('/data') and os.path.exists('/data/reference_data'):
             print(os.listdir('/data/reference_data'))
 
-        print('BERDL Token')
-        print(self.get_berdl_token())
+        self.run_genome_pipeline(input_params.resolve())
+
+        #print('BERDL Token')
+        #print(self.get_berdl_token())
 
         # Validate required parameters
         self._validate_params(params, ['input_refs', 'workspace_name'])
 
         workspace_name = params['workspace_name']
         input_refs = params['input_refs']
-        suffix = params.get('suffix', '')
+        suffix = params.get('suffix', ctx['token'])
         save_models = params.get('save_models', 0)
 
         for ref in params['input_refs']:
