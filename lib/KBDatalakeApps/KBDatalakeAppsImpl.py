@@ -65,6 +65,7 @@ Author: chenry
         cmd = ["/kb/module/scripts/run_genome_pipeline.sh", str(input_file)]
 
         env = os.environ.copy()
+        env["PYTHONPATH"] = "/opt/env/berdl_genomes/lib/python3.10/site-packages"
 
         process = subprocess.Popen(
             cmd,
