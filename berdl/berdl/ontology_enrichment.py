@@ -42,11 +42,12 @@ class OntologyEnrichment:
     Data sources:
     - BERDL API: GO, EC, SO, PFAM
     - KEGG REST API: KEGG KO (https://rest.kegg.jp/list/ko)
-    - Local definitions: COG categories
+    - NCBI COG API: COG definitions (https://www.ncbi.nlm.nih.gov/research/cog/api/cogdef/)
     """
 
     BERDL_API_URL = "https://hub.berdl.kbase.us/apis/mcp/delta/tables/query"
     KEGG_API_URL = "https://rest.kegg.jp"
+    COG_API_URL = "https://www.ncbi.nlm.nih.gov/research/cog/api/cogdef/"
 
     # API settings
     BATCH_SIZE = 100
@@ -57,9 +58,8 @@ class OntologyEnrichment:
     _kegg_ko_cache: Dict[str, str] = None
     # Cache for COG definitions (loaded once)
     _cog_def_cache: Dict[str, Dict] = None
-
-    # COG definition file from NCBI FTP
-    COG_DEF_URL = "https://ftp.ncbi.nih.gov/pub/COG/COG2020/data/cog-20.def.tab"
+    # Cache for COG functional categories (loaded from API)
+    _cog_funcats_cache: Dict[str, str] = None
 
     def __init__(self, token: str):
         """
@@ -224,45 +224,69 @@ class OntologyEnrichment:
 
     def _load_cog_definitions(self) -> Dict[str, Dict]:
         """
-        Load COG definitions from NCBI FTP.
+        Load COG definitions from NCBI COG API.
 
-        Downloads https://ftp.ncbi.nih.gov/pub/COG/COG2020/data/cog-20.def.tab
-        which contains ~5,000 COG definitions.
+        Uses https://www.ncbi.nlm.nih.gov/research/cog/api/cogdef/?format=json
+        with pagination to get all ~5,000 COG definitions.
 
         Returns:
-            Dict mapping COG ID (e.g., 'COG0001') to dict with name, category, gene, pathway
+            Dict mapping COG ID (e.g., 'COG0001') to dict with name, funcats, genes, pathways
         """
         if OntologyEnrichment._cog_def_cache is not None:
             return OntologyEnrichment._cog_def_cache
 
-        print("    Loading COG definitions from NCBI FTP...")
+        print("    Loading COG definitions from NCBI API...")
+        cog_dict = {}
+        funcats_dict = {}
+        url = f"{self.COG_API_URL}?format=json"
+
         try:
-            response = requests.get(self.COG_DEF_URL, timeout=60)
+            page_count = 0
+            while url:
+                response = requests.get(url, timeout=120)
 
-            if response.status_code == 200:
-                cog_dict = {}
-                for line in response.text.strip().split('\n'):
-                    parts = line.split('\t')
-                    if len(parts) >= 3:
-                        cog_id = parts[0]  # COG0001
-                        category = parts[1] if len(parts) > 1 else ''
-                        name = parts[2] if len(parts) > 2 else ''
-                        gene = parts[3] if len(parts) > 3 else ''
-                        pathway = parts[4] if len(parts) > 4 else ''
+                if response.status_code != 200:
+                    print(f"    NCBI COG API error: {response.status_code}")
+                    break
 
-                        cog_dict[cog_id] = {
-                            'name': name,
-                            'category': category,
-                            'gene': gene,
-                            'pathway': pathway
-                        }
+                data = response.json()
+                results = data.get('results', [])
 
-                OntologyEnrichment._cog_def_cache = cog_dict
-                print(f"    Loaded {len(cog_dict)} COG definitions")
-                return cog_dict
-            else:
-                print(f"    NCBI FTP error: {response.status_code}")
-                return {}
+                for cog in results:
+                    cog_id = cog.get('cogid', '')
+                    if not cog_id:
+                        continue
+
+                    # Extract functional categories
+                    funcats = cog.get('funcats', [])
+                    cat_codes = []
+                    for fc in funcats:
+                        cat_name = fc.get('name', '')
+                        cat_desc = fc.get('description', '')
+                        if cat_name:
+                            cat_codes.append(cat_name)
+                            # Cache funcat descriptions for category lookups
+                            if cat_name not in funcats_dict:
+                                funcats_dict[cat_name] = cat_desc
+
+                    cog_dict[cog_id] = {
+                        'name': cog.get('name', ''),
+                        'category': ''.join(cat_codes),
+                        'genes': cog.get('genes', []),
+                        'pathways': cog.get('pathways', []),
+                        'funcats': funcats
+                    }
+
+                # Follow pagination
+                url = data.get('next')
+                page_count += 1
+                if page_count % 10 == 0:
+                    print(f"      Loaded {len(cog_dict)} COGs so far...")
+
+            OntologyEnrichment._cog_def_cache = cog_dict
+            OntologyEnrichment._cog_funcats_cache = funcats_dict
+            print(f"    Loaded {len(cog_dict)} COG definitions and {len(funcats_dict)} functional categories")
+            return cog_dict
 
         except Exception as e:
             print(f"    Error loading COG definitions: {e}")
@@ -270,42 +294,15 @@ class OntologyEnrichment:
 
     def _enrich_cog_from_ncbi(self, cog_ids: List[str]) -> Dict[str, Dict]:
         """
-        Enrich COG terms from NCBI COG database.
+        Enrich COG terms from NCBI COG API.
 
-        Downloads definitions from NCBI FTP (cached after first call).
+        Uses cached API data after first call.
         """
         # Load COG definitions (cached)
         cog_definitions = self._load_cog_definitions()
 
-        # COG category descriptions
-        cog_categories = {
-            'J': 'Translation, ribosomal structure and biogenesis',
-            'A': 'RNA processing and modification',
-            'K': 'Transcription',
-            'L': 'Replication, recombination and repair',
-            'B': 'Chromatin structure and dynamics',
-            'D': 'Cell cycle control, cell division, chromosome partitioning',
-            'Y': 'Nuclear structure',
-            'V': 'Defense mechanisms',
-            'T': 'Signal transduction mechanisms',
-            'M': 'Cell wall/membrane/envelope biogenesis',
-            'N': 'Cell motility',
-            'Z': 'Cytoskeleton',
-            'W': 'Extracellular structures',
-            'U': 'Intracellular trafficking, secretion, and vesicular transport',
-            'O': 'Posttranslational modification, protein turnover, chaperones',
-            'X': 'Mobilome: prophages, transposons',
-            'C': 'Energy production and conversion',
-            'G': 'Carbohydrate transport and metabolism',
-            'E': 'Amino acid transport and metabolism',
-            'F': 'Nucleotide transport and metabolism',
-            'H': 'Coenzyme transport and metabolism',
-            'I': 'Lipid transport and metabolism',
-            'P': 'Inorganic ion transport and metabolism',
-            'Q': 'Secondary metabolites biosynthesis, transport and catabolism',
-            'R': 'General function prediction only',
-            'S': 'Function unknown',
-        }
+        # Get functional categories from cache (populated by _load_cog_definitions)
+        funcats_cache = OntologyEnrichment._cog_funcats_cache or {}
 
         results = {}
         for cog_id in cog_ids:
@@ -313,18 +310,35 @@ class OntologyEnrichment:
             if re.match(r'COG:[A-Z]$', cog_id):
                 cat = cog_id.replace('COG:', '')
                 results[cog_id] = {
-                    'label': cog_categories.get(cat, ''),
-                    'definition': ''
+                    'label': funcats_cache.get(cat, ''),
+                    'definition': f"COG functional category {cat}"
                 }
             # Handle COG IDs (e.g., COG:COG0001)
             else:
                 # Extract COG ID (COG:COG0001 -> COG0001)
                 raw_id = cog_id.replace('COG:', '')
                 info = cog_definitions.get(raw_id, {})
-                results[cog_id] = {
-                    'label': info.get('name', ''),
-                    'definition': f"Category: {info.get('category', '')}. Gene: {info.get('gene', '')}. Pathway: {info.get('pathway', '')}" if info else ''
-                }
+
+                if info:
+                    # Build definition from API data
+                    def_parts = []
+                    if info.get('category'):
+                        def_parts.append(f"Category: {info['category']}")
+                    if info.get('genes'):
+                        genes_str = ', '.join(info['genes'][:5])  # First 5 genes
+                        if len(info['genes']) > 5:
+                            genes_str += f" (+{len(info['genes'])-5} more)"
+                        def_parts.append(f"Genes: {genes_str}")
+                    if info.get('pathways'):
+                        pathways_str = ', '.join(info['pathways'][:3])
+                        def_parts.append(f"Pathways: {pathways_str}")
+
+                    results[cog_id] = {
+                        'label': info.get('name', ''),
+                        'definition': '. '.join(def_parts) if def_parts else ''
+                    }
+                else:
+                    results[cog_id] = {'label': '', 'definition': ''}
 
         return results
 
