@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 #BEGIN_HEADER
+import json
 import logging
 import os
 import uuid
+from pathlib import Path
 import shutil
 
 from installed_clients.KBaseReportClient import KBaseReport
@@ -105,6 +107,16 @@ Author: chenry
         #BEGIN build_genome_datalake_tables
         self.logger.info(f"Building genome datalake tables with params: {params}")
 
+        input_params = Path(self.shared_folder) / 'input_params.json'
+        with open(str(input_params.resolve()), 'w') as fh:
+            _params = dict(params)
+            _params['_scratch'] = self.shared_folder
+            _params['_token'] = ctx['token']
+            _params['_ws_url'] = self.config['workspace-url']
+            fh.write(json.dumps(_params))
+
+        print('ctx', ctx)
+        print('contig', self.config)
         print('data dir')
         print(os.listdir('/data'))
         if os.path.exists('/data') and os.path.exists('/data/reference_data'):
@@ -118,7 +130,7 @@ Author: chenry
 
         workspace_name = params['workspace_name']
         input_refs = params['input_refs']
-        suffix = params.get('suffix', '')
+        suffix = params.get('suffix', ctx['token'])
         save_models = params.get('save_models', 0)
 
         for ref in params['input_refs']:
