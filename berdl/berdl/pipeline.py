@@ -9,8 +9,9 @@ from cobrakbase import KBaseAPI
 
 def main(input_params):
     #  setup clients/methods
-    kbase = KBaseAPI(input_params['_ctx']['token'], config={
-        'workspace-url': input_params['_config']['workspace-url']})
+    kbase = KBaseAPI(input_params['_ctx']['token'], dev=True)
+    #kbase = KBaseAPI(input_params['_ctx']['token'], config={
+    #    'workspace-url': input_params['_config']['workspace-url']})
 
     #  extract genomes
     genomes = []

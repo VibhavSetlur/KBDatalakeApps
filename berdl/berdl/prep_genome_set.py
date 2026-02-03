@@ -55,7 +55,7 @@ class BERDLPreGenome:
 
     def get_genome_assembly(self, g):
         assembly = self.kbase.get_from_ws(g.assembly_ref)
-        handle_local_path = f'/storage/fliu/data/kbase/handle/{assembly.fasta_handle_ref}'
+        handle_local_path = f'/tmp/{assembly.fasta_handle_ref}'
         if not os.path.exists(handle_local_path):
             print('fetch from kbase')
             self.kbase.download_file_from_kbase2(assembly.fasta_handle_ref, handle_local_path)

@@ -1,5 +1,5 @@
 lib/KBDatalakeApps/KBDatalakeAppsImpl.py.bak*
-
+test/test_env
 # KBase SDK
 test_local/
 sdk.cfg
