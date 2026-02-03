@@ -595,11 +595,15 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
         Pipeline step for running ontology term query against KBase BERDL.
 
         Extracts ontology term IDs (GO, EC, KEGG, COG, PFAM, SO) from genome
-        TSV files and enriches them with labels and definitions from BERDL API.
+        data and enriches them with labels and definitions from BERDL API.
+
+        Input sources (checked in order):
+        1. SQLite database (berdl_tables.db) - genome_features table
+        2. TSV files in genomes/ directory
 
         Results are saved to:
         - self.directory/ontology_terms.tsv (all enriched terms)
-        - Updates genome TSV files with enrichment data (optional)
+        - Adds ontology_terms table to SQLite database if it exists
 
         Author: Jose P. Faria (jplfaria@gmail.com)
         """
@@ -613,17 +617,48 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
             print("Warning: No BERDL token available, skipping ontology enrichment")
             return
 
-        genomes_dir = os.path.join(self.directory, "genomes")
-        if not os.path.exists(genomes_dir):
-            print(f"Warning: Genomes directory not found at {genomes_dir}, skipping")
+        # Try to load genome data from multiple sources
+        genome_dataframes = []
+        data_source = None
+
+        # Source 1: SQLite database
+        db_path = os.path.join(self.directory, "berdl_tables.db")
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                # Check if genome_features table exists
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='genome_features'")
+                if cursor.fetchone():
+                    genome_df = pd.read_sql_query("SELECT * FROM genome_features", conn)
+                    if not genome_df.empty:
+                        genome_dataframes.append(genome_df)
+                        data_source = "SQLite database"
+                        print(f"  Loading genome data from SQLite: {len(genome_df)} features")
+                conn.close()
+            except Exception as e:
+                print(f"  Warning: Could not read from SQLite: {e}")
+
+        # Source 2: TSV files in genomes/ directory
+        if not genome_dataframes:
+            genomes_dir = os.path.join(self.directory, "genomes")
+            if os.path.exists(genomes_dir):
+                genome_files = [f for f in os.listdir(genomes_dir) if f.endswith('.tsv')]
+                for genome_file in genome_files:
+                    filepath = os.path.join(genomes_dir, genome_file)
+                    try:
+                        genome_df = pd.read_csv(filepath, sep='\t')
+                        genome_dataframes.append(genome_df)
+                    except Exception as e:
+                        print(f"  Warning: Could not read {genome_file}: {e}")
+                if genome_dataframes:
+                    data_source = f"TSV files ({len(genome_dataframes)} genomes)"
+
+        if not genome_dataframes:
+            print("Warning: No genome data found (checked SQLite and TSV files), skipping")
             return
 
-        genome_files = [f for f in os.listdir(genomes_dir) if f.endswith('.tsv')]
-        if not genome_files:
-            print("Warning: No genome TSV files found, skipping ontology enrichment")
-            return
-
-        print(f"Running ontology term enrichment for {len(genome_files)} genomes...")
+        print(f"Running ontology term enrichment from {data_source}...")
 
         try:
             # Initialize enrichment client
@@ -632,31 +667,37 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
             # Collect all unique ontology terms across all genomes
             all_terms = set()
 
-            for genome_file in genome_files:
-                filepath = os.path.join(genomes_dir, genome_file)
+            for genome_df in genome_dataframes:
                 try:
-                    genome_df = pd.read_csv(filepath, sep='\t')
                     terms_by_type = enricher.extract_ontology_terms(genome_df)
-
                     for terms in terms_by_type.values():
                         all_terms.update(terms)
-
                 except Exception as e:
-                    print(f"  Warning: Could not extract terms from {genome_file}: {e}")
+                    print(f"  Warning: Could not extract terms from dataframe: {e}")
 
             if not all_terms:
                 print("  No ontology terms found in genomes")
                 return
 
-            print(f"  Found {len(all_terms)} unique ontology terms across all genomes")
+            print(f"  Found {len(all_terms)} unique ontology terms")
 
             # Enrich all terms
             enriched_df = enricher.enrich_terms(list(all_terms))
 
-            # Save enriched terms
+            # Save enriched terms to TSV
             output_path = os.path.join(self.directory, "ontology_terms.tsv")
             enriched_df.to_csv(output_path, sep='\t', index=False)
             print(f"  Saved {len(enriched_df)} enriched terms to {output_path}")
+
+            # Also save to SQLite database if it exists
+            if os.path.exists(db_path):
+                try:
+                    conn = sqlite3.connect(db_path)
+                    enriched_df.to_sql('ontology_terms', conn, if_exists='replace', index=False)
+                    conn.close()
+                    print(f"  Added 'ontology_terms' table to SQLite database")
+                except Exception as e:
+                    print(f"  Warning: Could not save to SQLite: {e}")
 
             # Summary by ontology type
             if not enriched_df.empty:
