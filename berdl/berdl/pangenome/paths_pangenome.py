@@ -46,13 +46,13 @@ class PathsPangenome:
         object.__setattr__(self, "ref_master_faa_protein_fitness", reference_root / "proteins_fitness_genomes.faa")
         object.__setattr__(self, "ref_master_faa_protein_phenotype", reference_root / "proteins_phenotype_genomes.faa")
 
-        object.__setattr__(self, "genome_prep_clade_data", self.root / "../user_to_clade.json")
+        object.__setattr__(self, "genome_prep_clade_data", (self.root / "../user_to_clade.json").resolve())
 
     def ensure(self) -> "PathsPangenome":
         for p in [self.ref_master_faa_protein_fitness,
                   self.ref_master_faa_protein_phenotype,
                   self.genome_prep_clade_data]:
-            if not p.exists():
+            if not p.resolve().exists():
                 raise FileNotFoundError(f"Missing reference data: {p}")
         # create required local dirs
         for p in [
