@@ -27,6 +27,9 @@ RUN wget -qO- https://astral.sh/uv/install.sh | sh
 RUN mkdir -p /opt/env
 RUN /root/.local/bin/uv venv --python 3.10 /opt/env/berdl_genomes
 
+# setup modelseedpy ml env
+RUN /root/.local/bin/uv venv --python 3.10 /opt/env/modelseedpy_ml
+
 # Copy in the SDK
 COPY --from=kbase/kb-sdk:1.2.1 /src /sdk
 RUN sed -i 's|/src|/sdk|g' /sdk/bin/*

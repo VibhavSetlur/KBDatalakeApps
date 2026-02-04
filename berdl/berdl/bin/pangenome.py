@@ -12,7 +12,7 @@ def main(input_params, selected_clade_member):
     scratch = input_params['_config']['scratch']
     root_pangenome = Path(scratch) / 'pangenome' / selected_clade_member
     paths = PathsPangenome(root=root_pangenome)
-
+    print(paths.root)
     query_pg = QueryPangenomeLocal('/data/reference_data/berdl_db/ke-pangenomes')
     query_g = QueryGenomeLocal()
     berld_pangenome = BERDLPangenome(query_pg, query_g, paths)

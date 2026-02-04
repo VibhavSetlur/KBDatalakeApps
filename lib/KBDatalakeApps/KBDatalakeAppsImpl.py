@@ -9,6 +9,7 @@ import shutil
 import json
 import subprocess
 import time
+import polars as pl
 
 from installed_clients.KBaseReportClient import KBaseReport
 from installed_clients.DataFileUtilClient import DataFileUtil
@@ -121,6 +122,8 @@ Author: chenry
         self.kb_bakta = kb_bakta(self.callback_url, service_ver='beta')
         self.kb_psortb = kb_psortb(self.callback_url, service_ver='beta')
         self.kb_kofam = kb_kofam(self.callback_url, service_ver='beta')
+
+        print('polars thread pool', pl.thread_pool_size())
         #self.utils = DatalakeAppUtils(callback_url=self.callback_url)
         #END_CONSTRUCTOR
         pass
@@ -198,7 +201,7 @@ Author: chenry
             if filename_faa.endswith('.faa'):
                 genome = MSGenome.from_fasta(str(path_user_genome / filename_faa))
                 proteins = {f.id:f.seq for f in genome.features if f.seq}
-                print(filename_faa, len(proteins))
+                print('running annotation for', filename_faa, len(proteins))
 
                 try:
                     print(f"run kb_kofam annotation for {genome}")
@@ -207,7 +210,7 @@ Author: chenry
                     result = self.kb_kofam.annotate_proteins(proteins)
                     end_time = time.perf_counter()
                     print(f"Execution time: {end_time - start_time} seconds")
-                    print(type(result), len(result))
+                    print(f'received results of type {type(result)} and size {len(result)}')
                 except Exception as ex:
                     print(f'nope {ex}')
 
@@ -218,7 +221,7 @@ Author: chenry
                     result = self.kb_bakta.annotate_proteins(proteins)
                     end_time = time.perf_counter()
                     print(f"Execution time: {end_time - start_time} seconds")
-                    print(type(result), len(result))
+                    print(f'received results of type {type(result)} and size {len(result)}')
                 except Exception as ex:
                     print(f'nope {ex}')
 
@@ -229,7 +232,7 @@ Author: chenry
                     result = self.kb_psortb.annotate_proteins(proteins, "-n")
                     end_time = time.perf_counter()
                     print(f"Execution time: {end_time - start_time} seconds")
-                    print(type(result), len(result))
+                    print(f'received results of type {type(result)} and size {len(result)}')
                 except Exception as ex:
                     print(f'nope {ex}')
         t_end_time = time.perf_counter()
