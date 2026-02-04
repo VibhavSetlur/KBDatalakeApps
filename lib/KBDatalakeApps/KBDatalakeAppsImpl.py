@@ -99,9 +99,9 @@ Author: chenry
         # Initialize KBUtilLib utilities
         self.dfu = DataFileUtil(self.callback_url)
         self.kbase_api = KBaseAPI(os.environ['KB_AUTH_TOKEN'], config=config)
-        self.kb_bakta = kb_bakta(self.callback_url, service_ver='dev')
-        self.kb_psortb = kb_psortb(self.callback_url, service_ver='appdev')
-        self.kb_kofam = kb_kofam(self.callback_url, service_ver='dev')
+        self.kb_bakta = kb_bakta(self.callback_url, service_ver='beta')
+        self.kb_psortb = kb_psortb(self.callback_url, service_ver='beta')
+        self.kb_kofam = kb_kofam(self.callback_url, service_ver='beta')
         #self.utils = DatalakeAppUtils(callback_url=self.callback_url)
         #END_CONSTRUCTOR
         pass
@@ -193,7 +193,7 @@ Author: chenry
                     print(type(result), len(result))
                 except Exception as ex:
                     print(f'nope {ex}')
-                    
+
                 try:
                     self.logger.info(f"run annotation for {genome}")
                     start_time = time.perf_counter()
