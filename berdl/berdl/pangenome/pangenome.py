@@ -1,5 +1,6 @@
 from modelseedpy.core.msgenome import MSFeature, MSGenome
 from berdl.pangenome.paths_pangenome import PathsPangenome
+from berdl.hash_seq import ProteinSequence
 
 
 class BERDLPangenome:
@@ -9,8 +10,8 @@ class BERDLPangenome:
         self.query_g = query_g
         self.paths = paths.ensure()
 
-    def run(self, genome_id):
-        clade_id = self.pg.get_member_representative(genome_id)
+    def run(self, selected_clade_member_id):
+        clade_id = self.pg.get_member_representative(selected_clade_member_id)
         clade_members = self.pg.get_clade_members(clade_id)
         clade_gene_clusters = self.pg.get_clade_gene_clusters(clade_id)
         clade_cluster_ids = set(clade_gene_clusters['gene_cluster_id'])
@@ -43,15 +44,26 @@ class BERDLPangenome:
         genome_master_faa.to_fasta(str(self.paths.out_master_faa_pangenome_members))
 
         #  collect user genome and add to u_proteins
-        
+        import json
+        with open(self.paths.genome_prep_clade_data, 'r') as fh:
+            clade_assignment = json.load(fh)
+
+        user_genomes = {k for k, v in clade_assignment.items() if v == selected_clade_member_id}
+        for g in user_genomes:
+            genome_path = self.paths.genome_prep_genome_folder / f'user_{g}.faa'
+            genome_user = MSGenome.from_fasta(str(genome_path.resolve()))
+            for feature in genome_user.features:
+                protein = ProteinSequence(feature.seq)
+                h = protein.hash_value
+                u_proteins[h] = MSFeature(h, feature.seq)
 
         #  collect phenotype and fitness
         genome_master_faa_fitness = MSGenome.from_fasta(str(self.paths.ref_master_faa_protein_fitness))
-        for feature in genome_master_faa_fitness:
+        for feature in genome_master_faa_fitness.features:
             if feature.id not in u_proteins:
                 u_proteins[feature.id] = MSFeature(feature.id, feature.seq)
         genome_master_faa_phenotype = MSGenome.from_fasta(str(self.paths.ref_master_faa_protein_phenotype))
-        for feature in genome_master_faa_phenotype:
+        for feature in genome_master_faa_phenotype.features:
             if feature.id not in u_proteins:
                 u_proteins[feature.id] = MSFeature(feature.id, feature.seq)
 

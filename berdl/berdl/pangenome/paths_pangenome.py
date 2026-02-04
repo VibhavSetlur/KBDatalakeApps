@@ -17,6 +17,7 @@ class PathsPangenome:
 
     # generate by genome prep step
     genome_prep_clade_data: Path = None
+    genome_prep_genome_folder: Path = None
 
     out_pangenome_library: Path = None
     out_pangenome_skani_database: Path = None
@@ -47,11 +48,14 @@ class PathsPangenome:
         object.__setattr__(self, "ref_master_faa_protein_phenotype", reference_root / "proteins_phenotype_genomes.faa")
 
         object.__setattr__(self, "genome_prep_clade_data", (self.root / "../user_to_clade.json").resolve())
+        object.__setattr__(self, "genome_prep_genome_folder", (self.root / "../../genome").resolve())
+
 
     def ensure(self) -> "PathsPangenome":
         for p in [self.ref_master_faa_protein_fitness,
                   self.ref_master_faa_protein_phenotype,
-                  self.genome_prep_clade_data]:
+                  self.genome_prep_clade_data,
+                  self.genome_prep_genome_folder]:
             if not p.resolve().exists():
                 raise FileNotFoundError(f"Missing reference data: {p}")
         # create required local dirs

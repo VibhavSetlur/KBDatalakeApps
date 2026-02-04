@@ -47,7 +47,11 @@ def main(input_params):
         p = paths.pangenome_dir / clade
         p.mkdir(parents=True, exist_ok=True)
         print(f"Create pangenome path: {p}")
-        pass
+
+    print(user_to_clade)
+    print(ani_clades)
+    print(ani_fitness)
+    print(df_ani_phenotype)
 
 
 if __name__ == "__main__":
