@@ -28,7 +28,9 @@ class BERDLPangenome:
         members = {}
         for row in clade_members.rows(named=True):
             member_id = row['genome_id']
-            members[member_id] = self.query_g.get_genome_features(member_id)
+            genome_features = self.query_g.get_genome_features(member_id)
+            genome_features.to_fasta(self.paths.genome_dir / f'{member_id}.faa')
+            members[member_id] = genome_features
 
         # build master protein user_genome + pangenome
 
@@ -40,6 +42,7 @@ class BERDLPangenome:
                 h = _parts[4]
                 u_proteins[h] = MSFeature(h, feature.seq)
 
+        print(f"write {clade_id} master faa")
         genome_master_faa = MSGenome()
         genome_master_faa.add_features(list(u_proteins.values()))
         genome_master_faa.to_fasta(str(self.paths.out_master_faa_pangenome_members))
@@ -70,6 +73,7 @@ class BERDLPangenome:
 
         # rebuild master faa genome with proteins from
         #  user / pangenome / fitness / phenotypes
+        print(f"write {clade_id} user / pangenome / fitness / phenotypes master faa")
         genome_master_faa = MSGenome()
         genome_master_faa.add_features(list(u_proteins.values()))
         genome_master_faa.to_fasta(str(self.paths.out_master_faa))
