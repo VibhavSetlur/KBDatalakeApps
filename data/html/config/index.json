@@ -2,100 +2,24 @@
     "app": {
         "name": "DataTables Viewer",
         "version": "3.1.0",
-        "description": "Production-grade configurable data table renderer for research applications",
-        "environment": "appdev"
+        "description": "Production-grade configurable data table renderer for research applications"
     },
     "apis": {
-        "default": {
-            "id": "default",
-            "name": "KBase AppDev TableScanner",
-            "url": "http://poplar.cels.anl.gov:8050/",
-            "type": "rest"
-        },
-        "prod": {
-            "id": "prod",
-            "name": "KBase Narrative API",
-            "url": "https://kbase.us/services",
-            "type": "rest"
-        },
-        "appdev": {
-            "id": "appdev",
-            "name": "KBase AppDev",
+        "tablescanner": {
+            "id": "tablescanner",
+            "name": "TableScanner Service",
             "url": "https://appdev.kbase.us/services/berdl_table_scanner",
             "type": "rest"
         },
-        "test_data": {
-            "id": "test_data",
-            "name": "Test Data (Local)",
-            "url": "/config/test-data.json",
-            "type": "json_server"
-        }
-    },
-    "dataTypes": {
-        "genome_data_tables": {
-            "configUrl": "/config/genome-data-tables.json",
-            "matches": [
-                "KBaseFBA.GenomeDataLakeTables-*",
-                "KBase.GenomeDataTables-*"
-            ],
-            "priority": 1,
-            "autoLoad": true,
-            "schemaMatch": {
-                "enabled": true,
-                "requiredTables": ["Genes"],
-                "requiredColumns": {
-                    "Genes": ["ID", "Database_ID"]
-                },
-                "minMatchScore": 0.7
-            }
-        },
-        "test_data": {
-            "configUrl": "/config/test-data.json",
-            "matches": [
-                "test_data",
-                "test/test/test"
-            ],
-            "priority": 10,
-            "autoLoad": true
-        },
-        "berdl_tables": {
-            "configUrl": "/config/berdl-tables.json",
-            "matches": [
-                "berdl_tables",
-                "local/berdl_tables",
-                "test/test/1",
-                "berdl/*"
-            ],
-            "priority": 5,
-            "autoLoad": true,
-            "schemaMatch": {
-                "enabled": true,
-                "requiredTables": ["genome", "contigs"],
-                "requiredColumns": {
-                    "genome": ["genome_id", "genome_name"],
-                    "contigs": ["contig_id", "genome_id"]
-                },
-                "minMatchScore": 0.6
-            }
-        },
-        "metabolic_models": {
-            "matches": [
-                "KBaseFBA.FBAModel-*"
-            ],
-            "priority": 2,
-            "autoLoad": false,
-            "schemaMatch": {
-                "enabled": true,
-                "requiredTables": ["Model"],
-                "requiredColumns": {
-                    "Model": ["id", "name"]
-                },
-                "minMatchScore": 0.7
-            }
+        "workspace": {
+            "id": "workspace",
+            "name": "KBase Workspace",
+            "url": "https://appdev.kbase.us/services/ws",
+            "type": "rest"
         }
     },
     "defaultConfig": {
-        "configUrl": "/config/default-config.json",
+        "configUrl": "./config/tables/default-config.json",
         "description": "Fallback configuration for unmapped databases"
     },
     "defaults": {
@@ -103,6 +27,8 @@
         "theme": "system",
         "density": "normal",
         "showRowNumbers": true,
+        "defaultSource": "76990/7/2",
+        "autoLoad": false,
         "locale": "en-US",
         "dateFormat": "YYYY-MM-DD",
         "numberFormat": {
@@ -112,7 +38,6 @@
         }
     },
     "features": {
-        "remoteConfig": false,
         "schemaExplorer": true,
         "columnSearch": true,
         "exportFormats": [
@@ -123,8 +48,6 @@
         "cellExpansion": true,
         "rowSelection": true,
         "keyboardNavigation": true,
-        "contextMenu": false,
-        "columnReordering": false,
         "columnResizing": true
     },
     "plugins": []

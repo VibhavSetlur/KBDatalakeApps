@@ -1,7 +1,7 @@
-from query_pangenome import QueryPangenomeABC
 import os
 from pathlib import Path
 import polars as pl
+from berdl.query.query_pangenome import QueryPangenomeABC
 from modelseedpy import MSGenome
 
 
