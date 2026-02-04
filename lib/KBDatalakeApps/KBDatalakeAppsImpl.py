@@ -174,7 +174,7 @@ Author: chenry
                 print(filename_faa, len(proteins))
                 self.logger.info(f"run annotation for {genome}")
                 start_time = time.perf_counter()
-                raw_annotation_kofam = self.kb_kofam(proteins)
+                raw_annotation_kofam = self.kb_kofam.annotate_proteins(proteins)
                 end_time = time.perf_counter()
                 print(f"Execution time: {end_time - start_time} seconds")
                 print(raw_annotation_kofam)
