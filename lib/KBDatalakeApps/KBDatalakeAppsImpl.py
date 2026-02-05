@@ -210,7 +210,8 @@ Author: chenry
                     current_seq = []
                 elif line:
                     current_seq.append(line)
-
+        if current_id:
+            sequence_hash[current_id] = "".join(current_seq)
         proteins = []
         ids = []
         for id, sequence in sequence_hash.items():
