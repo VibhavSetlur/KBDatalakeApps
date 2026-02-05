@@ -23,7 +23,7 @@ from modelseedpy import MSModelUtil
 from modelseedpy.core.msgenome import MSGenome, MSFeature
 from cobrakbase import KBaseAPI
 from installed_clients.baseclient import ServerError
-from annotation.annotation import test_annotation
+from annotation.annotation import test_annotation, run_rast, run_kofam
 
 # Import KBUtilLib utilities for common functionality
 #from kbutillib import KBWSUtils, KBCallbackUtils, SharedEnvUtils
@@ -31,6 +31,38 @@ from annotation.annotation import test_annotation
 #class DatalakeAppUtils(KBWSUtils, KBCallbackUtils, SharedEnvUtils):
 #    """Custom utility class combining KBUtilLib modules for datalake operations."""
 #    pass
+
+def human_size(size):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024:
+            return f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{size:.1f}PB"
+
+
+def print_path(root: Path):
+    if not root.exists():
+        print(f"{root} does not exist")
+        return
+
+    print(root.name)
+    _print_tree(root, prefix="")
+
+
+def _print_tree(root: Path, prefix: str):
+    entries = sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+    for i, path in enumerate(entries):
+        is_last = i == len(entries) - 1
+        connector = "└── " if is_last else "├── "
+
+        if path.is_file():
+            size = human_size(path.stat().st_size)
+            print(prefix + connector + f"{path.name} ({size})")
+        else:
+            print(prefix + connector + path.name)
+            extension = "    " if is_last else "│   "
+            _print_tree(path, prefix + extension)
+
 #END_HEADER
 
 
@@ -273,23 +305,20 @@ Author: chenry
                 print('skip_annotation')
             else:
                 if filename_faa.endswith('.faa'):
-                    genome = MSGenome.from_fasta(str(path_user_genome / filename_faa))
-                    proteins = {f.id:f.seq for f in genome.features if f.seq}
-                    print('running annotation for', filename_faa, len(proteins))
-
+                    input_genome_file = str(path_user_genome / filename_faa)
                     try:
-                        print(f"run kb_kofam annotation for {genome}")
-                        self.logger.info(f"run annotation for {genome}")
-                        start_time = time.perf_counter()
-                        result = self.kb_kofam.annotate_proteins(proteins)
-                        end_time = time.perf_counter()
-                        print(f"Execution time: {end_time - start_time} seconds")
-                        print(f'received results of type {type(result)} and size {len(result)}')
-
-                        print(result)
+                        output_annotation = path_user_genome / f'{filename_faa[:-4]}_kofam.tsv'
+                        run_kofam(self.kb_kofam, input_genome_file, output_annotation)
                     except Exception as ex:
                         print(f'nope {ex}')
 
+                    try:
+                        output_annotation = path_user_genome / f'{filename_faa[:-4]}_rast.tsv'
+                        run_rast(self.rast_client, input_genome_file, output_annotation)
+                    except Exception as ex:
+                        print(f'nope {ex}')
+
+                    """
                     try:
                         print(f"run kb_bakta annotation for {genome}")
                         self.logger.info(f"run annotation for {genome}")
@@ -311,9 +340,12 @@ Author: chenry
                         print(f'received results of type {type(result)} and size {len(result)}')
                     except Exception as ex:
                         print(f'nope {ex}')
+                    """
 
         t_end_time = time.perf_counter()
         print(f"Total Execution time annotation: {t_end_time - t_start_time} seconds")
+
+        print_path(Path(self.shared_folder).resolve())
 
         # Create KBaseFBA.GenomeDataLakeTables
 

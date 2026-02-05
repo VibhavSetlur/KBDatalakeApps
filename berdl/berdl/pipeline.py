@@ -49,8 +49,11 @@ def main(input_params):
         print(f"Create pangenome path: {p}")
 
     print(user_to_clade)
+    print('ANI Clades:')
     print(ani_clades)
+    print('ANI Fitness:')
     print(ani_fitness)
+    print('ANI Phenotypes:')
     print(ani_phenotype)
 
 
