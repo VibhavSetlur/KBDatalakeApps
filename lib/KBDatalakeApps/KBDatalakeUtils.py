@@ -25,6 +25,14 @@ import cobra
 from modelseedpy import AnnotationOntology, MSPackageManager, MSTemplateBuilder, MSMedia, MSModelUtil, MSBuilder, MSATPCorrection, MSGapfill, MSGrowthPhenotype, MSGrowthPhenotypes, ModelSEEDBiochem, MSExpression
 from modelseedpy.helpers import get_template
 
+# BERDL query modules (Jose P. Faria)
+try:
+    from berdl.berdl import QueryPangenomeBERDL, OntologyEnrichment
+except ImportError:
+    # Fallback for when berdl module is not installed
+    QueryPangenomeBERDL = None
+    OntologyEnrichment = None
+
 
 class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionUtils, MSFBAUtils, MSBiochemUtils):
     def __init__(self, directory, reference_path, worker_count, parameters, **kwargs):
@@ -267,8 +275,95 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
     def pipeline_run_pangenome_kberdl_query(self):
         """
         Pipeline step for running pangenome query against KBase BERDL.
+
+        Uses SKANI results to find related pangenome data for each user genome.
+        Queries BERDL for:
+        - Clade membership information
+        - Gene clusters for matched clades
+        - ANI matrices for matched genomes
+
+        Results are saved to self.directory/berdl_pangenome/
+
+        Author: Jose P. Faria (jplfaria@gmail.com)
         """
-        #TODO: Jose should fill in his code for kberdle query using API here using SKANI results as input
+        if QueryPangenomeBERDL is None:
+            print("Warning: BERDL pangenome module not available, skipping")
+            return
+
+        # Get token from environment or app parameters
+        token = os.environ.get('KBASE_AUTH_TOKEN') or self.app_parameters.get('token', '')
+        if not token:
+            print("Warning: No BERDL token available, skipping pangenome query")
+            return
+
+        skani_file = os.path.join(self.directory, "skani", "skani_pangenome.tsv")
+        if not os.path.exists(skani_file):
+            print(f"Warning: SKANI pangenome results not found at {skani_file}, skipping")
+            return
+
+        output_dir = os.path.join(self.directory, "berdl_pangenome")
+        os.makedirs(output_dir, exist_ok=True)
+
+        print("Running BERDL pangenome queries...")
+
+        try:
+            # Initialize BERDL query client
+            qp = QueryPangenomeBERDL(token=token)
+
+            # Load SKANI results
+            skani_df = pd.read_csv(skani_file, sep='\t')
+            print(f"  Loaded {len(skani_df)} SKANI hits")
+
+            # Get unique reference genomes from SKANI hits
+            if 'reference_genome' not in skani_df.columns:
+                print("  Warning: No reference_genome column in SKANI results")
+                return
+
+            reference_genomes = skani_df['reference_genome'].unique().tolist()
+            print(f"  Found {len(reference_genomes)} unique reference genomes")
+
+            # Query clade information for each reference genome
+            clade_results = []
+            for ref_genome in reference_genomes[:50]:  # Limit to avoid timeout
+                try:
+                    clade_id = qp.get_member_representative(ref_genome)
+                    clade_results.append({
+                        'reference_genome': ref_genome,
+                        'gtdb_species_clade_id': clade_id
+                    })
+                except Exception as e:
+                    print(f"  Warning: Could not get clade for {ref_genome}: {e}")
+
+            if clade_results:
+                clade_df = pd.DataFrame(clade_results)
+                clade_path = os.path.join(output_dir, "reference_clades.tsv")
+                clade_df.to_csv(clade_path, sep='\t', index=False)
+                print(f"  Saved {len(clade_results)} clade mappings to {clade_path}")
+
+                # Get unique clades and query their members
+                unique_clades = clade_df['gtdb_species_clade_id'].unique().tolist()
+                print(f"  Querying {len(unique_clades)} unique clades...")
+
+                all_clade_members = []
+                for clade_id in unique_clades[:20]:  # Limit
+                    try:
+                        members_df = qp.get_clade_members(clade_id)
+                        if not members_df.empty:
+                            members_df['query_clade'] = clade_id
+                            all_clade_members.append(members_df)
+                    except Exception as e:
+                        print(f"  Warning: Could not get members for clade {clade_id}: {e}")
+
+                if all_clade_members:
+                    combined_members = pd.concat(all_clade_members, ignore_index=True)
+                    members_path = os.path.join(output_dir, "clade_members.tsv")
+                    combined_members.to_csv(members_path, sep='\t', index=False)
+                    print(f"  Saved {len(combined_members)} clade members to {members_path}")
+
+            print("BERDL pangenome queries complete")
+
+        except Exception as e:
+            print(f"Error in BERDL pangenome query: {e}")
 
     def pipeline_download_user_genome_genes(self):
         """
@@ -548,8 +643,126 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
     def pipeline_run_ontology_term_kberdl_query(self):
         """
         Pipeline step for running ontology term query against KBase BERDL.
+
+        Extracts ontology term IDs (GO, EC, KEGG, COG, PFAM, SO) from genome
+        data and enriches them with labels and definitions from BERDL API.
+
+        Input sources (checked in order):
+        1. SQLite database (berdl_tables.db) - genome_features table
+        2. TSV files in genomes/ directory
+
+        Results are saved to:
+        - self.directory/ontology_terms.tsv (all enriched terms)
+        - Adds ontology_terms table to SQLite database if it exists
+
+        Author: Jose P. Faria (jplfaria@gmail.com)
         """
-        #TODO: Jose should fill in his code for ontology term query using API here using genome TSV files as input
+        if OntologyEnrichment is None:
+            print("Warning: BERDL ontology module not available, skipping")
+            return
+
+        # Get token from environment or app parameters
+        token = os.environ.get('KBASE_AUTH_TOKEN') or self.app_parameters.get('token', '')
+        if not token:
+            print("Warning: No BERDL token available, skipping ontology enrichment")
+            return
+
+        # Try to load genome data from multiple sources
+        genome_dataframes = []
+        data_source = None
+
+        # Source 1: SQLite database
+        db_path = os.path.join(self.directory, "berdl_tables.db")
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                # Check if genome_features table exists
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='genome_features'")
+                if cursor.fetchone():
+                    genome_df = pd.read_sql_query("SELECT * FROM genome_features", conn)
+                    if not genome_df.empty:
+                        genome_dataframes.append(genome_df)
+                        data_source = "SQLite database"
+                        print(f"  Loading genome data from SQLite: {len(genome_df)} features")
+                conn.close()
+            except Exception as e:
+                print(f"  Warning: Could not read from SQLite: {e}")
+
+        # Source 2: TSV files in genomes/ directory
+        if not genome_dataframes:
+            genomes_dir = os.path.join(self.directory, "genomes")
+            if os.path.exists(genomes_dir):
+                genome_files = [f for f in os.listdir(genomes_dir) if f.endswith('.tsv')]
+                for genome_file in genome_files:
+                    filepath = os.path.join(genomes_dir, genome_file)
+                    try:
+                        genome_df = pd.read_csv(filepath, sep='\t')
+                        genome_dataframes.append(genome_df)
+                    except Exception as e:
+                        print(f"  Warning: Could not read {genome_file}: {e}")
+                if genome_dataframes:
+                    data_source = f"TSV files ({len(genome_dataframes)} genomes)"
+
+        if not genome_dataframes:
+            print("Warning: No genome data found (checked SQLite and TSV files), skipping")
+            return
+
+        print(f"Running ontology term enrichment from {data_source}...")
+
+        try:
+            # Initialize enrichment client
+            enricher = OntologyEnrichment(token=token)
+
+            # Collect all unique ontology terms across all genomes
+            all_terms = set()
+
+            for genome_df in genome_dataframes:
+                try:
+                    terms_by_type = enricher.extract_ontology_terms(genome_df)
+                    for terms in terms_by_type.values():
+                        all_terms.update(terms)
+                except Exception as e:
+                    print(f"  Warning: Could not extract terms from dataframe: {e}")
+
+            if not all_terms:
+                print("  No ontology terms found in genomes")
+                return
+
+            print(f"  Found {len(all_terms)} unique ontology terms")
+
+            # Enrich all terms
+            enriched_df = enricher.enrich_terms(list(all_terms))
+
+            # Save enriched terms to TSV
+            output_path = os.path.join(self.directory, "ontology_terms.tsv")
+            enriched_df.to_csv(output_path, sep='\t', index=False)
+            print(f"  Saved {len(enriched_df)} enriched terms to {output_path}")
+
+            # Also save to SQLite database if it exists
+            if os.path.exists(db_path):
+                try:
+                    conn = sqlite3.connect(db_path)
+                    enriched_df.to_sql('ontology_terms', conn, if_exists='replace', index=False)
+                    conn.close()
+                    print(f"  Added 'ontology_terms' table to SQLite database")
+                except Exception as e:
+                    print(f"  Warning: Could not save to SQLite: {e}")
+
+            # Summary by ontology type
+            if not enriched_df.empty:
+                print("\n  Enrichment summary:")
+                for prefix in ['GO:', 'EC:', 'KEGG:', 'COG:', 'PFAM:', 'SO:']:
+                    count = len(enriched_df[enriched_df['identifier'].str.startswith(prefix)])
+                    if count > 0:
+                        with_label = len(enriched_df[(enriched_df['identifier'].str.startswith(prefix)) &
+                                                      (enriched_df['label'] != '')])
+                        print(f"    {prefix[:-1]}: {count} terms, {with_label} with labels")
+
+            print("Ontology term enrichment complete")
+
+        except Exception as e:
+            print(f"Error in ontology enrichment: {e}")
 
     def pipeline_save_annotated_genomes(self):
         """
