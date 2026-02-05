@@ -20,6 +20,7 @@ from installed_clients.kb_psortbClient import kb_psortb
 from installed_clients.kb_kofamClient import kb_kofam
 from modelseedpy import MSGenome
 from cobrakbase import KBaseAPI
+from installed_clients.baseclient import ServerError
 
 # Import KBUtilLib utilities for common functionality
 #from kbutillib import KBWSUtils, KBCallbackUtils, SharedEnvUtils
@@ -302,20 +303,26 @@ Author: chenry
         if os.path.exists('/data') and os.path.exists('/data/reference_data'):
             print(os.listdir('/data/reference_data'))
 
-        #Printing test file for RAST annotation demonstration
-        proteins = [
-            ("Test3.CDS.1", "tRNA:Cm32/Um32 methyltransferase", "LFILTATGNMSLCGLKKECLIAASELVTCRE"),
-            ("Test3.CDS.2", "Aspartokinase (EC 2.7.2.4);Homoserine dehydrogenase (EC 1.1.1.3)", "MRVLKFGGTSVANAERFLRVADILESNARQGQVATVLSAPAKITNHLVAMIEKTISGQDALPNISDAERIFAELLTGLAAAQPGFPLAQLKTFVDQEFAQIKHVLHGISLLGQCPDSINAALICRGEKMSIAIMAGVLEARGHNVTVIDPVEKLLAVGHYLESTVDIAESTRRIAASRIPADHMVLMAGFTAGNEKGELVVLGRNGSDYSAAVLAACLRADCCEIWTDVDGVYTCDPRQVPDARLLKSMSYQEAMELSYFGAKVLHPRTITPIAQFQIPCLIKNTGNPQAPGTLIGASRDEDELPVKGISNLNNMAMFSVSGPGMKGMVGMAARVFAAMSRARISVVLITQSSSEYSISFCVPQSDCVRAERAMQEEFYLELKEGLLEPLAVTERLAIISVVGDGMRTLRGISAKFFAALARANINIVAIAQGSSERSISVVVNNDDATTGVRVTHQMLFNTDQVIEVFVIGVGGVGGALLEQLKRQQSWLKNKHIDLRVCGVANSKALLTNVHGLNLENWQEELAQAKEPFNLGRLIRLVKEYHLLNPVIVDCTSSQAVADQYADFLREGFHVVTPNKKANTSSMDYYHQLRYAAEKSRRKFLYDTNVGAGLPVIENLQNLLNAGDELMKFSGILSGSLSYIFGKLDEGMSFSEATTLAREMGYTEPDPRDDLSGMDVARKLLILARETGRELELADIEIEPVLPAEFNAEGDVAAFMANLSQLDDLFAARVAKARDEGKVLRYVGNIDEDGVCRVKIAEVDGNDPLFKVKNGENALAFYSHYYQPLPLVLRGYGAGNDVTAAGVFADLLRTLSWKLGV"),
-        ]
-        with open(self.shared_folder +"/test.faa", "w") as f:
-            for seq_id, function, sequence in proteins:
-                f.write(f">{seq_id} {function}\n{sequence}\n")
+        def test_annotation_rast():
+            # Printing test file for RAST annotation demonstration
+            proteins = [
+                ("Test3.CDS.1", "tRNA:Cm32/Um32 methyltransferase", "LFILTATGNMSLCGLKKECLIAASELVTCRE"),
+                ("Test3.CDS.2", "Aspartokinase (EC 2.7.2.4);Homoserine dehydrogenase (EC 1.1.1.3)",
+                 "MRVLKFGGTSVANAERFLRVADILESNARQGQVATVLSAPAKITNHLVAMIEKTISGQDALPNISDAERIFAELLTGLAAAQPGFPLAQLKTFVDQEFAQIKHVLHGISLLGQCPDSINAALICRGEKMSIAIMAGVLEARGHNVTVIDPVEKLLAVGHYLESTVDIAESTRRIAASRIPADHMVLMAGFTAGNEKGELVVLGRNGSDYSAAVLAACLRADCCEIWTDVDGVYTCDPRQVPDARLLKSMSYQEAMELSYFGAKVLHPRTITPIAQFQIPCLIKNTGNPQAPGTLIGASRDEDELPVKGISNLNNMAMFSVSGPGMKGMVGMAARVFAAMSRARISVVLITQSSSEYSISFCVPQSDCVRAERAMQEEFYLELKEGLLEPLAVTERLAIISVVGDGMRTLRGISAKFFAALARANINIVAIAQGSSERSISVVVNNDDATTGVRVTHQMLFNTDQVIEVFVIGVGGVGGALLEQLKRQQSWLKNKHIDLRVCGVANSKALLTNVHGLNLENWQEELAQAKEPFNLGRLIRLVKEYHLLNPVIVDCTSSQAVADQYADFLREGFHVVTPNKKANTSSMDYYHQLRYAAEKSRRKFLYDTNVGAGLPVIENLQNLLNAGDELMKFSGILSGSLSYIFGKLDEGMSFSEATTLAREMGYTEPDPRDDLSGMDVARKLLILARETGRELELADIEIEPVLPAEFNAEGDVAAFMANLSQLDDLFAARVAKARDEGKVLRYVGNIDEDGVCRVKIAEVDGNDPLFKVKNGENALAFYSHYYQPLPLVLRGYGAGNDVTAAGVFADLLRTLSWKLGV"),
+            ]
+            with open(self.shared_folder + "/test.faa", "w") as f:
+                for seq_id, function, sequence in proteins:
+                    f.write(f">{seq_id} {function}\n{sequence}\n")
 
-        with open(self.shared_folder + "/test.faa", 'r') as fh:
-            print('example faa:\n', fh.read())
-        self.run_RAST_annotation(self.shared_folder +"/test.faa", self.shared_folder +"/rast.tsv", self.rast_client)
+            with open(self.shared_folder + "/test.faa", 'r') as fh:
+                print('example faa:\n', fh.read())
+            self.run_RAST_annotation(self.shared_folder + "/test.faa", self.shared_folder + "/rast.tsv",
+                                     self.rast_client)
 
-
+        try:
+            test_annotation_rast()
+        except ServerError as ex_server:
+            logging.warning(f'error: {ex_server}')
 
         #print('BERDL Token')
         #print(self.get_berdl_token())
