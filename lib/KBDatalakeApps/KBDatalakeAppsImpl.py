@@ -13,6 +13,7 @@ import polars as pl
 
 from installed_clients.KBaseReportClient import KBaseReport
 from installed_clients.DataFileUtilClient import DataFileUtil
+from installed_clients.RAST_SDKClient import RAST_SDK
 from installed_clients.kb_baktaClient import kb_bakta
 from installed_clients.kb_psortbClient import kb_psortb
 from installed_clients.kb_kofamClient import kb_kofam
@@ -100,9 +101,132 @@ Author: chenry
         ret = process.wait()
         if ret != 0:
             raise RuntimeError(
-                f"Pan-Genome pipeline failed with exit code {ret}"
+                f"Genome pipeline failed with exit code {ret}"
             )
 
+    @staticmethod
+    def run_user_genome_to_tsv(genome_ref,output_filename):
+        # # Load genome object into object_hash
+        # obj = self.load_kbase_gene_container(genome_ref, localname=genome_id)
+        # genome_data = obj["data"]
+        # obj_type = (
+        #     obj.get("info", [None] * 3)[2]
+        #     if "info" in obj
+        #     else "KBaseGenomes.Genome"
+        # )
+
+        # # Use KBAnnotationUtils.process_object to standardise
+        # # features, aliases, and ontology terms in self.ftrhash
+        # self.process_object({"object": genome_data, "type": obj_type})
+
+        # # Discover all cleaned ontology types across this genome
+        # all_ontology_types = set()
+        # for ftr in self.ftrhash.values():
+        #     for raw_tag in ftr.get("ontology_terms", {}):
+        #         all_ontology_types.add(self.clean_tag(raw_tag))
+        # sorted_ont_types = sorted(all_ontology_types)
+
+        # # Build rows – only genes and noncoding features
+        # gene_rows = []
+        # for ftr_id, ftr in self.ftrhash.items():
+        #     ftr_type = self.ftrtypes.get(ftr_id, 'Unknown')
+        #     if ftr_type not in ('gene', 'noncoding'):
+        #         continue
+        #     # Aliases (upgrade_feature already normalised to [[src, val], ...])
+        #     aliases = ftr.get("aliases", [])
+        #     alias_str = (
+        #         ";".join(f"{a[0]}:{a[1]}" for a in aliases if len(a) >= 2)
+        #         if aliases else ""
+        #     )
+
+        #     # Location
+        #     locations = ftr.get("location", [])
+        #     contig = locations[0][0] if locations else ""
+        #     start = locations[0][1] if locations else 0
+        #     strand = locations[0][2] if locations else "+"
+        #     length = locations[0][3] if locations else 0
+        #     end = start + length if strand == "+" else start - length
+
+        #     # Functions (upgrade_feature converted 'function' → 'functions' list)
+        #     functions = ftr.get("functions", [])
+        #     if isinstance(functions, list):
+        #         functions_str = ";".join(functions)
+        #     else:
+        #         functions_str = str(functions) if functions else ""
+
+        #     row_data = {
+        #         'gene_id': ftr.get('id', ''),
+        #         'aliases': alias_str,
+        #         'contig': contig,
+        #         'start': start,
+        #         'end': end,
+        #         'strand': strand,
+        #         'type': ftr_type,
+        #         'functions': functions_str,
+        #         'protein_translation': ftr.get('protein_translation', ''),
+        #         'dna_sequence': ftr.get('dna_sequence', ''),
+        #     }
+
+        #     # Add a column per ontology type
+        #     for ont_type in sorted_ont_types:
+        #         terms_list = []
+        #         for raw_tag, terms_dict in ftr.get("ontology_terms", {}).items():
+        #             if self.clean_tag(raw_tag) != ont_type:
+        #                 continue
+        #             for raw_term in terms_dict:
+        #                 cleaned = self.clean_term(raw_term, raw_tag, ont_type)
+        #                 name = self.get_term_name(ont_type, cleaned)
+        #                 rxns = self.translate_term_to_modelseed(cleaned)
+        #                 entry = f"{cleaned}:{name}"
+        #                 if rxns:
+        #                     entry += "|" + ",".join(rxns)
+        #                 terms_list.append(entry)
+        #         row_data[f"Annotation:{ont_type}"] = (
+        #             ";".join(terms_list) if terms_list else ""
+        #         )
+
+        #     gene_rows.append(row_data)
+
+        # gene_df = pd.DataFrame(gene_rows)
+        # output_path = os.path.join(genomes_dir, f"{genome_id}.tsv")
+        # gene_df.to_csv(output_path, sep='\t', index=False)
+        # ont_msg = ", ".join(sorted_ont_types) if sorted_ont_types else "none"
+        # print(f"  Saved {len(gene_rows)} features for {genome_id} "
+        #         f"(ontologies: {ont_msg})")
+        pass
+
+    @staticmethod
+    def run_RAST_annotation(input_filepath,output_filename):
+        sequence_hash = {}
+        current_id = None
+        current_seq = []
+        with open(input_filepath) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(">"):
+                    if current_id:
+                        sequence_hash[current_id] = "".join(current_seq)
+                    current_id = line[1:].split()[0]
+                    current_seq = []
+                elif line:
+                    current_seq.append(line)
+
+        proteins = []
+        ids = []
+        for id, sequence in sequence_hash.items():
+            proteins.append(sequence)
+            ids.append(id)
+
+        result = self.rast_client.annotate_proteins({'proteins': proteins})
+        functions_list = result.get('functions', [])
+        records = []
+        for id, functions in zip(ids, functions_list):
+            records.append({
+                'id': id,
+                'functions': functions
+            })
+        df = pd.DataFrame.from_records(records)
+        df.to_csv(output_filename, sep='\t', index=False)
     #END_CLASS_HEADER
 
     # config contains contents of config file in a hash or None if it couldn't
@@ -116,14 +240,15 @@ Author: chenry
                             level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
-        # Initialize KBUtilLib utilities
-        self.dfu = DataFileUtil(self.callback_url)
+        # Initialize KBUtilib utilities
+        self.dfu = DataFileULtil(self.callback_url)
         self.kbase_api = KBaseAPI(os.environ['KB_AUTH_TOKEN'], config=config)
         self.kb_bakta = kb_bakta(self.callback_url, service_ver='beta')
         self.kb_psortb = kb_psortb(self.callback_url, service_ver='beta')
         self.kb_kofam = kb_kofam(self.callback_url, service_ver='beta')
 
         print('polars thread pool', pl.thread_pool_size())
+        self.rast_client = RAST_SDK(self.callback_url)
         #self.utils = DatalakeAppUtils(callback_url=self.callback_url)
         #END_CONSTRUCTOR
         pass
@@ -171,6 +296,16 @@ Author: chenry
         print(os.listdir('/data'))
         if os.path.exists('/data') and os.path.exists('/data/reference_data'):
             print(os.listdir('/data/reference_data'))
+
+        #Printing test file for RAST annotation demonstration
+        proteins = [
+            ("Test3.CDS.1", "tRNA:Cm32/Um32 methyltransferase", "LFILTATGNMSLCGLKKECLIAASELVTCRE"),
+            ("Test3.CDS.2", "Aspartokinase (EC 2.7.2.4);Homoserine dehydrogenase (EC 1.1.1.3)", "MRVLKFGGTSVANAERFLRVADILESNARQGQVATVLSAPAKITNHLVAMIEKTISGQDALPNISDAERIFAELLTGLAAAQPGFPLAQLKTFVDQEFAQIKHVLHGISLLGQCPDSINAALICRGEKMSIAIMAGVLEARGHNVTVIDPVEKLLAVGHYLESTVDIAESTRRIAASRIPADHMVLMAGFTAGNEKGELVVLGRNGSDYSAAVLAACLRADCCEIWTDVDGVYTCDPRQVPDARLLKSMSYQEAMELSYFGAKVLHPRTITPIAQFQIPCLIKNTGNPQAPGTLIGASRDEDELPVKGISNLNNMAMFSVSGPGMKGMVGMAARVFAAMSRARISVVLITQSSSEYSISFCVPQSDCVRAERAMQEEFYLELKEGLLEPLAVTERLAIISVVGDGMRTLRGISAKFFAALARANINIVAIAQGSSERSISVVVNNDDATTGVRVTHQMLFNTDQVIEVFVIGVGGVGGALLEQLKRQQSWLKNKHIDLRVCGVANSKALLTNVHGLNLENWQEELAQAKEPFNLGRLIRLVKEYHLLNPVIVDCTSSQAVADQYADFLREGFHVVTPNKKANTSSMDYYHQLRYAAEKSRRKFLYDTNVGAGLPVIENLQNLLNAGDELMKFSGILSGSLSYIFGKLDEGMSFSEATTLAREMGYTEPDPRDDLSGMDVARKLLILARETGRELELADIEIEPVLPAEFNAEGDVAAFMANLSQLDDLFAARVAKARDEGKVLRYVGNIDEDGVCRVKIAEVDGNDPLFKVKNGENALAFYSHYYQPLPLVLRGYGAGNDVTAAGVFADLLRTLSWKLGV"),
+        ]
+        with open(self.shared_folder +"/test.faa", "w") as f:
+            for seq_id, function, sequence in proteins:
+                f.write(f">{seq_id} {function}\n{sequence}\n")
+        self.run_RAST_annotation(self.shared_folder +"/test.faa", self.shared_folder +"/rast.tsv")
 
 
 
@@ -292,7 +427,7 @@ Author: chenry
 
         self.logger.info(f"HTML directory contents: {os.listdir(output_directory)}")
         self.logger.info(f"Shock ID: {shock_id}")
-        
+
 
         html_report = [{
             'shock_id': shock_id,

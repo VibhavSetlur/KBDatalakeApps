@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import sqlite3
 import json
 import uuid
@@ -26,12 +27,13 @@ from modelseedpy.helpers import get_template
 
 
 class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionUtils, MSFBAUtils, MSBiochemUtils):
-    def __init__(self, directory, worker_count, parameters, **kwargs):
+    def __init__(self, directory, reference_path, worker_count, parameters, **kwargs):
         super().__init__(
-            name="KBDataLakeUtils",
-            **kwargs
+                name="KBDataLakeUtils",
+                **kwargs
         )
         self.directory = directory
+        self.reference_path = reference_path
         self.worker_count = worker_count
         self.app_parameters = parameters
         self.workspace_name = self.app_parameters['workspace_name']
@@ -316,9 +318,12 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
                         all_ontology_types.add(self.clean_tag(raw_tag))
                 sorted_ont_types = sorted(all_ontology_types)
 
-                # Build rows
+                # Build rows – only genes and noncoding features
                 gene_rows = []
                 for ftr_id, ftr in self.ftrhash.items():
+                    ftr_type = self.ftrtypes.get(ftr_id, 'Unknown')
+                    if ftr_type not in ('gene', 'noncoding'):
+                        continue
                     # Aliases (upgrade_feature already normalised to [[src, val], ...])
                     aliases = ftr.get("aliases", [])
                     alias_str = (
@@ -348,7 +353,7 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
                         'start': start,
                         'end': end,
                         'strand': strand,
-                        'type': self.ftrtypes.get(ftr_id, 'Unknown'),
+                        'type': ftr_type,
                         'functions': functions_str,
                         'protein_translation': ftr.get('protein_translation', ''),
                         'dna_sequence': ftr.get('dna_sequence', ''),
@@ -387,7 +392,12 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
     def pipeline_annotate_user_genome_with_rast(self):
         """
         Pipeline step for annotating genomes with RAST.
-        Submits protein sequences for RAST annotation and adds results to genome TSV files.
+        Submits protein sequences for RAST annotation, translates the
+        returned function strings to SSO terms, and populates the
+        ``Annotation:SSO`` column in each genome TSV file.
+
+        Skips any genome whose TSV already contains a non-empty
+        ``Annotation:SSO`` column (e.g. from existing KBase annotations).
         """
         genomes_dir = os.path.join(self.directory, "genomes")
         genome_files = [f for f in os.listdir(genomes_dir) if f.endswith('.tsv')]
@@ -397,10 +407,26 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
         for genome_file in genome_files:
             genome_id = genome_file.replace('.tsv', '')
             filepath = os.path.join(genomes_dir, genome_file)
-            print(f"Annotating {genome_id} with RAST...")
 
             try:
                 df = pd.read_csv(filepath, sep='\t')
+
+                # Skip if Annotation:SSO already has data
+                if 'Annotation:SSO' in df.columns:
+                    non_empty = (
+                        df['Annotation:SSO']
+                        .fillna('')
+                        .astype(str)
+                        .str.strip()
+                        .ne('')
+                        .sum()
+                    )
+                    if non_empty > 0:
+                        print(f"  Skipping {genome_id}: Annotation:SSO already "
+                              f"populated ({non_empty} entries)")
+                        continue
+
+                print(f"Annotating {genome_id} with RAST...")
 
                 # Collect protein sequences for annotation
                 proteins = []
@@ -412,7 +438,8 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
                         protein_indices.append(idx)
 
                 if not proteins:
-                    df['rast_functions'] = ''
+                    if 'Annotation:SSO' not in df.columns:
+                        df['Annotation:SSO'] = ''
                     df.to_csv(filepath, sep='\t', index=False)
                     continue
 
@@ -420,19 +447,42 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
                 result = rast_client.annotate_proteins({'proteins': proteins})
                 functions_list = result.get('functions', [])
 
-                # Map RAST annotations back to DataFrame
-                rast_col = [''] * len(df)
+                # Translate RAST functions → SSO terms and populate column
+                sso_col = [''] * len(df)
                 for i, idx in enumerate(protein_indices):
-                    if i < len(functions_list):
-                        funcs = functions_list[i]
-                        if isinstance(funcs, list):
-                            rast_col[idx] = ';'.join(funcs)
-                        elif isinstance(funcs, str):
-                            rast_col[idx] = funcs
+                    if i >= len(functions_list):
+                        continue
+                    funcs = functions_list[i]
+                    if isinstance(funcs, str):
+                        funcs = [funcs]
+                    if not isinstance(funcs, list):
+                        continue
 
-                df['rast_functions'] = rast_col
+                    sso_entries = []
+                    for func_str in funcs:
+                        # Split multi-role function strings the same way
+                        # KBAnnotationUtils.upgrade_feature does
+                        roles = re.split(r"\s*;\s+|\s+[\@\/]\s+", func_str)
+                        for role in roles:
+                            role = role.strip()
+                            if not role:
+                                continue
+                            sso_id = self.translate_rast_function_to_sso(role)
+                            if sso_id is None:
+                                continue
+                            name = self.get_term_name("SSO", sso_id)
+                            rxns = self.translate_term_to_modelseed(sso_id)
+                            entry = f"{sso_id}:{name}"
+                            if rxns:
+                                entry += "|" + ",".join(rxns)
+                            sso_entries.append(entry)
+                    sso_col[idx] = ";".join(sso_entries)
+
+                df['Annotation:SSO'] = sso_col
                 df.to_csv(filepath, sep='\t', index=False)
-                print(f"  Added RAST annotations for {len(protein_indices)} proteins in {genome_id}")
+                annotated = sum(1 for x in sso_col if x)
+                print(f"  Added RAST/SSO annotations for {annotated}/"
+                      f"{len(protein_indices)} proteins in {genome_id}")
 
             except Exception as e:
                 print(f"  Warning: RAST annotation failed for {genome_id}: {e}")
@@ -634,9 +684,10 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
         for model_file in model_files:
             model_id = model_file.replace('_model.json', '')
             work_items.append({
-                'model_id': model_id,
-                'model_path': os.path.join(models_dir, model_file),
-                'phenotypes_dir': phenotypes_dir,
+                'genome_id': model_id,
+                'directory': self.directory,
+                'max_phenotypes': 5,
+                'reference_path': self.reference_path
             })
 
         errors = []
@@ -644,7 +695,7 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
 
         with ProcessPoolExecutor(max_workers=self.worker_count) as executor:
             future_to_model = {
-                executor.submit(_simulate_phenotypes_worker, item): item['model_id']
+                executor.submit(_simulate_phenotypes_worker, item): item['genome_id']
                 for item in work_items
             }
 
@@ -985,12 +1036,24 @@ def _build_single_model_worker(work_item):
             gene_id = gene.get('gene_id', '')
             if pd.notna(protein) and protein:
                 feature = MSFeature(gene_id, str(protein))
-                # Add RAST annotations if present
-                rast_funcs = gene.get('rast_functions', '')
-                if pd.notna(rast_funcs) and rast_funcs:
-                    for func in str(rast_funcs).split(';'):
-                        if func.strip():
-                            feature.add_ontology_term('RAST', func.strip())
+                # Parse Annotation:SSO column
+                # Format: SSO:nnnnn:description|rxn1,rxn2;SSO:mmmmm:desc2|rxn3
+                sso_col = gene.get('Annotation:SSO', '')
+                if pd.notna(sso_col) and sso_col:
+                    for entry in str(sso_col).split(';'):
+                        entry = entry.strip()
+                        if not entry:
+                            continue
+                        term_part = entry.split('|')[0]
+                        parts = term_part.split(':')
+                        if len(parts) >= 2 and parts[0] == 'SSO':
+                            sso_id = parts[0] + ':' + parts[1]
+                            feature.add_ontology_term('SSO', sso_id)
+                            # Extract description for classifier
+                            if len(parts) >= 3:
+                                description = ':'.join(parts[2:])
+                                if description:
+                                    feature.add_ontology_term('RAST', description)
                 ms_features.append(feature)
 
         genome.add_features(ms_features)
@@ -1064,7 +1127,6 @@ def _build_single_model_worker(work_item):
             'error': f"{str(e)}\n{traceback.format_exc()}"
         }
 
-
 def _simulate_phenotypes_worker(work_item):
     """
     Worker function for parallel phenotype simulation.
@@ -1079,6 +1141,8 @@ def _simulate_phenotypes_worker(work_item):
     import os
     import sys
     import json
+    import cobra
+    from modelseedpy import MSGrowthPhenotypes, MSATPCorrection,MSGapfill,MSModelUtil
 
     sys.path = [
         "/deps/KBUtilLib/src",
@@ -1087,47 +1151,93 @@ def _simulate_phenotypes_worker(work_item):
     ] + sys.path
 
     try:
-        import cobra
-        from modelseedpy import MSModelUtil
-
-        model_id = work_item['model_id']
-        model_path = work_item['model_path']
-        phenotypes_dir = work_item['phenotypes_dir']
+        genome_id = work_item['genome_id']
+        phenotypes_dir = work_item['directory'] + '/phenotypes/'
+        reference_path = work_item['reference_path']
 
         # Load model
-        model = cobra.io.load_json_model(model_path)
-        MSModelUtil(model)
+        model = cobra.io.load_json_model(work_item['directory'] + '/models/' + genome_id + '_model.json')
+        mdlutl = MSModelUtil(model)
 
-        # Build result structure
-        result = {
-            'model_id': model_id,
-            'success': True,
-            'accuracy': {},
-            'gene_phenotype_reactions': [],
-            'phenotype_gaps': [],
-            'gapfilled_reactions': [],
-            'num_phenotypes': 0,
-        }
+        #Loading the phenotype set from the reference path
+        filename = reference_path + "/phenotypes/full_phenotype_set.json"
+        with open(filename) as f:
+            phenoset_data = json.load(f)
+        #Setting max phenotypes if specified in the work item
+        if "max_phenotypes" in work_item:
+            phenoset_data["phenotypes"] = phenoset_data["phenotypes"][:work_item["max_phenotypes"]]
+        #Instantiating the phenotype set
+        phenoset = MSGrowthPhenotypes.from_dict(phenoset_data)
 
-        # Extract gapfilled reactions info
-        for rxn in model.reactions:
-            if hasattr(rxn, 'annotation'):
-                sbo = rxn.annotation.get('sbo', '')
-                if sbo == 'SBO:0000176':
-                    result['gapfilled_reactions'].append({
-                        'reaction_id': rxn.id,
-                        'reaction_name': rxn.name,
-                        'gpr': rxn.gene_reaction_rule,
-                        'lower_bound': rxn.lower_bound,
-                        'upper_bound': rxn.upper_bound,
-                    })
+        # Create a minimal util instance for this worker
+        class PhenotypeWorkerUtil(MSReconstructionUtils,MSFBAUtils,MSBiochemUtils):
+            def __init__(self):
+                super().__init__(name="PhenotypeWorkerUtil")
+        pheno_util = PhenotypeWorkerUtil()
 
-        # Save results
-        output_path = os.path.join(phenotypes_dir, f'{model_id}_phenosim.json')
-        with open(output_path, 'w') as f:
-            json.dump(result, f, indent=2)
+        # Get template for gapfilling
+        template = pheno_util.get_template(pheno_util.templates["gn"], None)
 
-        return result
+        # Retrieve ATP test conditions from the model
+        atpcorrection = MSATPCorrection(mdlutl)
+        atp_tests = atpcorrection.build_tests()
+
+        # Create gapfiller with ATP test conditions
+        gapfiller = MSGapfill(
+            mdlutl,
+            default_gapfill_templates=[template],
+            default_target='bio1',
+            minimum_obj=0.01,
+            test_conditions=[atp_tests[0]]
+        )
+        pheno_util.set_media(gapfiller.gfmodelutl, "KBaseMedia/Carbon-Pyruvic-Acid")
+
+        # Prefilter gapfilling database with ATP test conditions
+        #print("Prefiltering gapfilling database...")
+        #gapfiller.prefilter()
+        #print("Prefiltering complete")
+
+        # Filter out mass imbalanced (MI) reactions from the gapfill model
+        mi_blocked_count = 0
+        reaction_scores = {}
+        for rxn in gapfiller.gfmodelutl.model.reactions:
+            # Extract the base ModelSEED reaction ID (rxnXXXXX) from the reaction ID
+            if rxn.id not in mdlutl.model.reactions and rxn.id in gapfiller.gfpkgmgr.getpkg("GapfillingPkg").gapfilling_penalties:
+                reaction_scores[rxn.id] = {
+                    "<": 10 * gapfiller.gfpkgmgr.getpkg("GapfillingPkg").gapfilling_penalties[rxn.id].get("reverse", 1),
+                    ">": 10 * gapfiller.gfpkgmgr.getpkg("GapfillingPkg").gapfilling_penalties[rxn.id].get("forward", 1)
+                }
+            ms_rxn_id = pheno_util.reaction_id_to_msid(rxn.id)
+            if ms_rxn_id:
+                ms_rxn = pheno_util.get_reaction_by_id(ms_rxn_id)
+                if ms_rxn and hasattr(ms_rxn, 'status') and ms_rxn.status and "MI" in ms_rxn.status:
+                    reaction_scores[rxn.id] = {"<":1000,">":1000}
+                    # Check if status contains "MI" (mass imbalanced)
+                    if rxn.id not in mdlutl.model.reactions:
+                        #If reaction is not in model, set bounds to 0
+                        rxn.lower_bound = 0
+                        rxn.upper_bound = 0
+                        mi_blocked_count += 1
+
+        # Run simulations with gapfilling for zero-growth phenotypes
+        # Note: test_conditions=None since we already ran prefilter
+        results = phenoset.simulate_phenotypes(
+            mdlutl,
+            add_missing_exchanges=True,
+            gapfill_negatives=True,
+            msgapfill=gapfiller,
+            test_conditions=None,
+            ignore_experimental_data=True,
+            annoont=None,
+            growth_threshold=0.01,
+            #reaction_scores=reaction_scores
+        )
+
+        os.makedirs(phenotypes_dir, exist_ok=True)
+        with open(phenotypes_dir+"/"+genome_id+".json", "w") as f:
+            json.dump(results, f, indent=4, skipkeys=True)
+
+        return {"success": True, "genome_id": genome_id}
 
     except Exception as e:
         import traceback

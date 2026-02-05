@@ -68,6 +68,7 @@ class NotebookUtil(NotebookUtils, SharedEnvUtils):
             directory=directory,
             worker_count=worker_count,
             parameters=parameters,
+            reference_path="/Users/chenry/Dropbox/Projects/KBDatalakeApps/notebooks/data/reference_data",
             # Inject token/config directly, skip all file reads
             token=token,
             config=config,
