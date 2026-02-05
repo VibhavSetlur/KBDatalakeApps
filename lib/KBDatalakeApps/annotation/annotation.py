@@ -23,11 +23,14 @@ def parse_psortb(data: str):
     annotation = {}
     lines = data.split('\n')
     h = lines[0].strip()
+    print(h)
     # skip header
     for line in lines[1:]:
-        r = line.strip().split('\t')
-        d = {h[i]: r[i].strip() for i in range(len(h))}
-        annotation[d['SeqID']] = d
+        if line:
+            r = line.strip().split('\t')
+            print(r)
+            d = {h[i]: r[i].strip() for i in range(len(h))}
+            annotation[d['SeqID']] = d
 
     return annotation
 
@@ -48,7 +51,7 @@ def test_annotation(client_kofam, client_bakta, client_psortb, client_rast):
         print(f"Execution time: {end_time - start_time} seconds")
         print(f'received results of type {type(result)} and size {len(result)}')
         print(result)
-        print('parse', parse_psortb(result))
+        print('parse', parse_kofam(result))
     except Exception as ex:
         print(f'nope {ex}')
 
@@ -91,5 +94,6 @@ def test_annotation(client_kofam, client_bakta, client_psortb, client_rast):
         annotation = {}
         for i in range(len(l_feature_id)):
             annotation[l_feature_id[i]] = result[i]
+        print('parse', annotation)
     except Exception as ex:
         print(f'nope {ex}')
