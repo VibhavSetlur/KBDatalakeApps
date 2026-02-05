@@ -21,6 +21,8 @@ from installed_clients.kb_psortbClient import kb_psortb
 from installed_clients.kb_kofamClient import kb_kofam
 from modelseedpy import MSGenome, MSFeature, MSModelUtil
 from cobrakbase import KBaseAPI
+from installed_clients.baseclient import ServerError
+from annotation.annotation import test_annotation
 
 # Import KBUtilLib utilities for common functionality
 #from kbutillib import KBWSUtils, KBCallbackUtils, SharedEnvUtils
@@ -107,7 +109,7 @@ Author: chenry
             )
 
     @staticmethod
-    def run_RAST_annotation(input_filepath,output_filename):
+    def run_RAST_annotation(input_filepath, output_filename, rast_client):
         sequence_hash = {}
         current_id = None
         current_seq = []
@@ -129,7 +131,11 @@ Author: chenry
             proteins.append(sequence)
             ids.append(id)
 
-        result = self.rast_client.annotate_proteins({'proteins': proteins})
+        annotate_protein_params = {'proteins': proteins}
+        print('annotate_protein_params:', annotate_protein_params)
+
+        result = rast_client.annotate_proteins(annotate_protein_params)
+        print('rast annotation result', result)
         functions_list = result.get('functions', [])
         records = []
         for id, functions in zip(ids, functions_list):
@@ -153,14 +159,14 @@ Author: chenry
         self.logger = logging.getLogger(__name__)
 
         # Initialize KBUtilib utilities
-        self.dfu = DataFileULtil(self.callback_url)
+        self.dfu = DataFileUtil(self.callback_url)
         self.kbase_api = KBaseAPI(os.environ['KB_AUTH_TOKEN'], config=config)
         self.kb_bakta = kb_bakta(self.callback_url, service_ver='beta')
         self.kb_psortb = kb_psortb(self.callback_url, service_ver='beta')
         self.kb_kofam = kb_kofam(self.callback_url, service_ver='beta')
 
         print('polars thread pool', pl.thread_pool_size())
-        self.rast_client = RAST_SDK(self.callback_url)
+        self.rast_client = RAST_SDK(self.callback_url, service_ver='beta')
         #self.utils = DatalakeAppUtils(callback_url=self.callback_url)
         #END_CONSTRUCTOR
         pass
@@ -189,6 +195,8 @@ Author: chenry
         # return variables are: output
         #BEGIN build_genome_datalake_tables
         self.logger.info(f"Building genome datalake tables with params: {params}")
+        skip_annotation = params['skip_annotation'] == 1
+        skip_pangenome = params['skip_pangenome'] == 1
 
         input_params = Path(self.shared_folder) / 'input_params.json'
         print(str(input_params.resolve()))
@@ -209,17 +217,29 @@ Author: chenry
         if os.path.exists('/data') and os.path.exists('/data/reference_data'):
             print(os.listdir('/data/reference_data'))
 
-        #Printing test file for RAST annotation demonstration
-        proteins = [
-            ("Test3.CDS.1", "tRNA:Cm32/Um32 methyltransferase", "LFILTATGNMSLCGLKKECLIAASELVTCRE"),
-            ("Test3.CDS.2", "Aspartokinase (EC 2.7.2.4);Homoserine dehydrogenase (EC 1.1.1.3)", "MRVLKFGGTSVANAERFLRVADILESNARQGQVATVLSAPAKITNHLVAMIEKTISGQDALPNISDAERIFAELLTGLAAAQPGFPLAQLKTFVDQEFAQIKHVLHGISLLGQCPDSINAALICRGEKMSIAIMAGVLEARGHNVTVIDPVEKLLAVGHYLESTVDIAESTRRIAASRIPADHMVLMAGFTAGNEKGELVVLGRNGSDYSAAVLAACLRADCCEIWTDVDGVYTCDPRQVPDARLLKSMSYQEAMELSYFGAKVLHPRTITPIAQFQIPCLIKNTGNPQAPGTLIGASRDEDELPVKGISNLNNMAMFSVSGPGMKGMVGMAARVFAAMSRARISVVLITQSSSEYSISFCVPQSDCVRAERAMQEEFYLELKEGLLEPLAVTERLAIISVVGDGMRTLRGISAKFFAALARANINIVAIAQGSSERSISVVVNNDDATTGVRVTHQMLFNTDQVIEVFVIGVGGVGGALLEQLKRQQSWLKNKHIDLRVCGVANSKALLTNVHGLNLENWQEELAQAKEPFNLGRLIRLVKEYHLLNPVIVDCTSSQAVADQYADFLREGFHVVTPNKKANTSSMDYYHQLRYAAEKSRRKFLYDTNVGAGLPVIENLQNLLNAGDELMKFSGILSGSLSYIFGKLDEGMSFSEATTLAREMGYTEPDPRDDLSGMDVARKLLILARETGRELELADIEIEPVLPAEFNAEGDVAAFMANLSQLDDLFAARVAKARDEGKVLRYVGNIDEDGVCRVKIAEVDGNDPLFKVKNGENALAFYSHYYQPLPLVLRGYGAGNDVTAAGVFADLLRTLSWKLGV"),
-        ]
-        with open(self.shared_folder +"/test.faa", "w") as f:
-            for seq_id, function, sequence in proteins:
-                f.write(f">{seq_id} {function}\n{sequence}\n")
-        self.run_RAST_annotation(self.shared_folder +"/test.faa", self.shared_folder +"/rast.tsv")
+        test_annotation(self.kb_kofam, self.kb_bakta, self.kb_psortb, self.rast_client)
+        """
+        def test_annotation_rast():
+            # Printing test file for RAST annotation demonstration
+            proteins = [
+                ("Test3.CDS.1", "tRNA:Cm32/Um32 methyltransferase", "LFILTATGNMSLCGLKKECLIAASELVTCRE"),
+                ("Test3.CDS.2", "Aspartokinase (EC 2.7.2.4);Homoserine dehydrogenase (EC 1.1.1.3)",
+                 "MRVLKFGGTSVANAERFLRVADILESNARQGQVATVLSAPAKITNHLVAMIEKTISGQDALPNISDAERIFAELLTGLAAAQPGFPLAQLKTFVDQEFAQIKHVLHGISLLGQCPDSINAALICRGEKMSIAIMAGVLEARGHNVTVIDPVEKLLAVGHYLESTVDIAESTRRIAASRIPADHMVLMAGFTAGNEKGELVVLGRNGSDYSAAVLAACLRADCCEIWTDVDGVYTCDPRQVPDARLLKSMSYQEAMELSYFGAKVLHPRTITPIAQFQIPCLIKNTGNPQAPGTLIGASRDEDELPVKGISNLNNMAMFSVSGPGMKGMVGMAARVFAAMSRARISVVLITQSSSEYSISFCVPQSDCVRAERAMQEEFYLELKEGLLEPLAVTERLAIISVVGDGMRTLRGISAKFFAALARANINIVAIAQGSSERSISVVVNNDDATTGVRVTHQMLFNTDQVIEVFVIGVGGVGGALLEQLKRQQSWLKNKHIDLRVCGVANSKALLTNVHGLNLENWQEELAQAKEPFNLGRLIRLVKEYHLLNPVIVDCTSSQAVADQYADFLREGFHVVTPNKKANTSSMDYYHQLRYAAEKSRRKFLYDTNVGAGLPVIENLQNLLNAGDELMKFSGILSGSLSYIFGKLDEGMSFSEATTLAREMGYTEPDPRDDLSGMDVARKLLILARETGRELELADIEIEPVLPAEFNAEGDVAAFMANLSQLDDLFAARVAKARDEGKVLRYVGNIDEDGVCRVKIAEVDGNDPLFKVKNGENALAFYSHYYQPLPLVLRGYGAGNDVTAAGVFADLLRTLSWKLGV"),
+            ]
+            with open(self.shared_folder + "/test.faa", "w") as f:
+                for seq_id, function, sequence in proteins:
+                    f.write(f">{seq_id} {function}\n{sequence}\n")
 
+            with open(self.shared_folder + "/test.faa", 'r') as fh:
+                print('example faa:\n', fh.read())
+            self.run_RAST_annotation(self.shared_folder + "/test.faa", self.shared_folder + "/rast.tsv",
+                                     self.rast_client)
 
+        try:
+            test_annotation_rast()
+        except ServerError as ex_server:
+            logging.warning(f'error: {ex_server}')
+        """
 
         #print('BERDL Token')
         #print(self.get_berdl_token())
@@ -239,49 +259,58 @@ Author: chenry
             if os.path.isdir(f'{path_pangenome}/{folder_pangenome}'):
                 print(f'Found pangenome folder: {folder_pangenome}')
                 # run pangenome pipeline for - folder_pangenome
-                self.run_pangenome_pipeline(input_params.resolve(), folder_pangenome)
+                if not skip_pangenome:
+                    self.run_pangenome_pipeline(input_params.resolve(), folder_pangenome)
+                else:
+                    print('skip pangenome')
 
         path_user_genome = Path(self.shared_folder) / "genome"
         t_start_time = time.perf_counter()
         for filename_faa in os.listdir(str(path_user_genome)):
-            print(filename_faa)
-            if filename_faa.endswith('.faa'):
-                genome = MSGenome.from_fasta(str(path_user_genome / filename_faa))
-                proteins = {f.id:f.seq for f in genome.features if f.seq}
-                print('running annotation for', filename_faa, len(proteins))
+            print('found', filename_faa)
+            if skip_annotation:
+                print('skip_annotation')
+            else:
+                if filename_faa.endswith('.faa'):
+                    genome = MSGenome.from_fasta(str(path_user_genome / filename_faa))
+                    proteins = {f.id:f.seq for f in genome.features if f.seq}
+                    print('running annotation for', filename_faa, len(proteins))
 
-                try:
-                    print(f"run kb_kofam annotation for {genome}")
-                    self.logger.info(f"run annotation for {genome}")
-                    start_time = time.perf_counter()
-                    result = self.kb_kofam.annotate_proteins(proteins)
-                    end_time = time.perf_counter()
-                    print(f"Execution time: {end_time - start_time} seconds")
-                    print(f'received results of type {type(result)} and size {len(result)}')
-                except Exception as ex:
-                    print(f'nope {ex}')
+                    try:
+                        print(f"run kb_kofam annotation for {genome}")
+                        self.logger.info(f"run annotation for {genome}")
+                        start_time = time.perf_counter()
+                        result = self.kb_kofam.annotate_proteins(proteins)
+                        end_time = time.perf_counter()
+                        print(f"Execution time: {end_time - start_time} seconds")
+                        print(f'received results of type {type(result)} and size {len(result)}')
 
-                try:
-                    print(f"run kb_bakta annotation for {genome}")
-                    self.logger.info(f"run annotation for {genome}")
-                    start_time = time.perf_counter()
-                    result = self.kb_bakta.annotate_proteins(proteins)
-                    end_time = time.perf_counter()
-                    print(f"Execution time: {end_time - start_time} seconds")
-                    print(f'received results of type {type(result)} and size {len(result)}')
-                except Exception as ex:
-                    print(f'nope {ex}')
+                        print(result)
+                    except Exception as ex:
+                        print(f'nope {ex}')
 
-                try:
-                    print(f"run kb_psortb annotation for {genome}")
-                    self.logger.info(f"run annotation for {genome}")
-                    start_time = time.perf_counter()
-                    result = self.kb_psortb.annotate_proteins(proteins, "-n")
-                    end_time = time.perf_counter()
-                    print(f"Execution time: {end_time - start_time} seconds")
-                    print(f'received results of type {type(result)} and size {len(result)}')
-                except Exception as ex:
-                    print(f'nope {ex}')
+                    try:
+                        print(f"run kb_bakta annotation for {genome}")
+                        self.logger.info(f"run annotation for {genome}")
+                        start_time = time.perf_counter()
+                        result = self.kb_bakta.annotate_proteins(proteins)
+                        end_time = time.perf_counter()
+                        print(f"Execution time: {end_time - start_time} seconds")
+                        print(f'received results of type {type(result)} and size {len(result)}')
+                    except Exception as ex:
+                        print(f'nope {ex}')
+
+                    try:
+                        print(f"run kb_psortb annotation for {genome}")
+                        self.logger.info(f"run annotation for {genome}")
+                        start_time = time.perf_counter()
+                        result = self.kb_psortb.annotate_proteins(proteins, "-n")
+                        end_time = time.perf_counter()
+                        print(f"Execution time: {end_time - start_time} seconds")
+                        print(f'received results of type {type(result)} and size {len(result)}')
+                    except Exception as ex:
+                        print(f'nope {ex}')
+
         t_end_time = time.perf_counter()
         print(f"Total Execution time annotation: {t_end_time - t_start_time} seconds")
 
@@ -297,6 +326,8 @@ Author: chenry
                 'user_genomes': [],
                 'datalake_genomes': [],
                 'sqllite_tables_handle_ref': 'KBH_248173'
+                # Chris sqlite KBH_248173
+                # random e. coli? assembly KBH_248118
             }],
         }
 

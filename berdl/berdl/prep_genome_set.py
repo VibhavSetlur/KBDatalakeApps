@@ -169,12 +169,6 @@ class BERDLPreGenome:
 
         assembly_to_user_id = {v[0]: k for k, v in user_genome_files.items()}
 
-        def q_transform(s):
-            return assembly_to_user_id[s.split('/')[-1]]
-
-        def r_transform(s):
-            return self.t_ncbi_to_gtdb_id(s.split('/')[-1].rsplit('_', 1)[0])
-
         def match_top_clade(ani_clades):
             top_matches = {}
 
@@ -192,5 +186,6 @@ class BERDLPreGenome:
             fh.write(json.dumps(user_to_clade))
 
         ani_fitness = self.ani_translate_fitness(df_ani_fitness, assembly_to_user_id)
+        ani_phenotype = self.ani_translate_phenotype(df_ani_phenotype, assembly_to_user_id)
 
-        return user_genome_files, user_to_clade, ani_clades, ani_fitness, df_ani_phenotype
+        return user_genome_files, user_to_clade, ani_clades, ani_fitness, ani_phenotype

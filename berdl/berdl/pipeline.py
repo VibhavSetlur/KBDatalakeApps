@@ -35,7 +35,7 @@ def main(input_params):
 
     paths = GenomePaths(root=Path(input_params['_config']['scratch']).resolve())
     berdl_prep_genomes = BERDLPreGenome(kbase, paths)
-    user_genome_files, user_to_clade, ani_clades, ani_fitness, df_ani_phenotype = berdl_prep_genomes.run(genomes)
+    user_genome_files, user_to_clade, ani_clades, ani_fitness, ani_phenotype = berdl_prep_genomes.run(genomes)
 
     clade_to_user_genomes = {}
     for u, c in user_to_clade.items():
@@ -51,7 +51,7 @@ def main(input_params):
     print(user_to_clade)
     print(ani_clades)
     print(ani_fitness)
-    print(df_ani_phenotype)
+    print(ani_phenotype)
 
 
 if __name__ == "__main__":
