@@ -5,25 +5,18 @@ import sqlite3
 import json
 import uuid
 import shutil
+import hashlib
 from os import path
-from concurrent.futures import ProcessPoolExecutor, as_completed
-# Add the parent directory to the sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-script_path = os.path.abspath(__file__)
-script_dir = os.path.dirname(script_path)
-base_dir = os.path.dirname(os.path.dirname(script_dir))
-folder_name = os.path.basename(script_dir)
 
-sys.path = ["/deps/KBUtilLib/src","/deps/cobrakbase","/deps/ModelSEEDpy"] + sys.path
+sys.path = ["/deps/KBUtilLib/src","/deps/cobrakbase","/deps/ModelSEEDpy","/deps/cb_annotation_ontology_api"] + sys.path
 
 # Import utilities with error handling
-from kbutillib import KBModelUtils, KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionUtils, MSFBAUtils, MSBiochemUtils
+from kbutillib import KBAnnotationUtils, KBReadsUtils, KBGenomeUtils, MSReconstructionUtils, MSFBAUtils, MSBiochemUtils
 
-import hashlib
 import pandas as pd
 import cobra
-from modelseedpy import AnnotationOntology, MSPackageManager, MSTemplateBuilder, MSMedia, MSModelUtil, MSBuilder, MSATPCorrection, MSGapfill, MSGrowthPhenotype, MSGrowthPhenotypes, ModelSEEDBiochem, MSExpression
-from modelseedpy.helpers import get_template
+from modelseedpy import AnnotationOntology, MSPackageManager, MSMedia, MSModelUtil, MSBuilder, MSATPCorrection, MSGapfill, MSGrowthPhenotype, MSGrowthPhenotypes, ModelSEEDBiochem, MSExpression
+from modelseedpy.core.mstemplate import MSTemplateBuilder
 
 # BERDL query modules (Jose P. Faria)
 """
@@ -35,55 +28,23 @@ except ImportError:
     OntologyEnrichment = None
 """
 
+global_kbversion = "prod"
 
-class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionUtils, MSFBAUtils, MSBiochemUtils):
-    def __init__(self, directory, reference_path, worker_count, parameters, **kwargs):
+class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
+    def __init__(self,kbversion,**kwargs):
         super().__init__(
                 name="KBDataLakeUtils",
+                kbversion=kbversion,
                 **kwargs
         )
-        self.directory = directory
-        self.reference_path = reference_path
-        self.worker_count = worker_count
-        self.app_parameters = parameters
-        self.workspace_name = self.app_parameters['workspace_name']
-        os.makedirs(self.directory , exist_ok=True)
+        global global_kbversion
+        global_kbversion = kbversion
 
-    def run_full_pipeline(self):
-        """
-        Run the full pipeline for modeling analysis.
-        """
-        # Step 1: Process input arguments into user genome table
-        self.pipeline_process_arguments_into_user_genome_table()
+    def run_user_genome_to_tsv(self,genome_ref,output_filename):
+        # Load genome object into object_hash
+        self.build_genome_tsv(genome_ref,output_filename)
 
-        # Step 2: Download assemblies and genome genes (independent, can run in parallel via threads)
-        self.pipeline_download_user_genome_assmemblies()
-        self.pipeline_download_user_genome_genes()
-
-        # Step 3: Run SKANI analysis on downloaded assemblies
-        self.pipeline_run_skani_analysis()
-
-        # Step 4: Annotate genomes with RAST
-        self.pipeline_annotate_user_genome_with_rast()
-
-        # Step 5: Build metabolic models (parallelized internally via ProcessPoolExecutor)
-        self.pipeline_run_moddeling_analysis()
-
-        # Step 6: Run phenotype simulations (parallelized internally via ProcessPoolExecutor)
-        self.pipeline_run_phenotype_simulations()
-
-        # Step 7: Build SQLite database from all output data
-        self.pipeline_build_sqllite_db()
-
-        # Step 8: Save outputs to KBase workspace
-        self.pipeline_save_annotated_genomes()
-        self.pipeline_save_models_to_kbase()
-        self.pipeline_save_genometables_workspace_object()
-
-        # Step 9: Generate and save report
-        self.pipeline_save_kbase_report()
-
-    def pipeline_process_arguments_into_user_genome_table(self):
+    def pipeline_process_arguments_into_user_genome_table(self,output_filename):
         """
         Pipeline step for processing arguments.
         Translates input reference list (genomes or genome sets) into a table
@@ -130,10 +91,9 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
             'num_noncoding_genes'
         ]
         df = pd.DataFrame(rows, columns=columns)
-        os.makedirs(self.directory, exist_ok=True)
-        output_path = os.path.join(self.directory, "user_genomes.tsv")
-        df.to_csv(output_path, sep='\t', index=False)
-        print(f"Saved {len(df)} genomes to {output_path}")
+        os.makedirs(output_filename, exist_ok=True)
+        df.to_csv(output_filename, sep='\t', index=False)
+        print(f"Saved {len(df)} genomes to {output_filename}")
 
     def _extract_genome_metadata(self, ref, obj=None):
         """Extract metadata from a genome object for the user genomes table."""
@@ -172,107 +132,6 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
             genome_source_name, num_contigs, num_proteins,
             num_noncoding
         ]
-
-    def pipeline_download_user_genome_assmemblies(self):
-        """
-        Pipeline step for downloading genome assemblies.
-        Reads user_genomes.tsv and downloads one assembly per genome to
-        self.directory/assemblies/<genome_id>.fasta.  If multiple genomes
-        share the same assembly_ref the file is copied rather than
-        re-downloaded.
-        """
-        genomes_file = os.path.join(self.directory, "user_genomes.tsv")
-        df = pd.read_csv(genomes_file, sep='\t')
-
-        assemblies_dir = os.path.join(self.directory, "assemblies")
-        os.makedirs(assemblies_dir, exist_ok=True)
-
-        downloaded = {}  # assembly_ref -> first local fasta path
-
-        for _, row in df.iterrows():
-            genome_id = row['genome_id']
-            assembly_ref = row.get('assembly_ref', '')
-            if not assembly_ref or pd.isna(assembly_ref):
-                print(f"Warning: No assembly_ref for {genome_id}, skipping")
-                continue
-
-            target_path = os.path.join(assemblies_dir, f"{genome_id}.fasta")
-
-            if assembly_ref in downloaded:
-                # Same assembly already downloaded for another genome – copy it
-                shutil.copy2(downloaded[assembly_ref], target_path)
-                print(f"  Copied assembly for {genome_id} (shared assembly_ref)")
-                continue
-
-            print(f"Downloading assembly for {genome_id}...")
-            try:
-                assembly_set = self.download_assembly([assembly_ref], assemblies_dir)
-                # Rename the assembly-id-named file to genome_id.fasta
-                for _name, assembly in assembly_set.assemblies.items():
-                    src = assembly.fasta_file
-                    if os.path.exists(src):
-                        shutil.move(src, target_path)
-                    break
-                downloaded[assembly_ref] = target_path
-                print(f"  Saved: {target_path}")
-            except Exception as e:
-                print(f"  Warning: Failed to download assembly for {genome_id}: {e}")
-
-        # Clean up the metadata file that download_assembly creates
-        meta_file = os.path.join(assemblies_dir, "assemblies_metadata.json")
-        if os.path.exists(meta_file):
-            os.remove(meta_file)
-
-        print(f"Downloaded {len(downloaded)} unique assemblies for {len(df)} genomes")
-
-    def pipeline_run_skani_analysis(self):
-        """
-        Pipeline step for running SKANI analysis.
-        Runs SKANI against pangenome, fitness, and phenotype sketch databases.
-        Results saved to self.directory/skani as TSV files.
-        """
-        assemblies_dir = os.path.join(self.directory, "assemblies")
-        skani_dir = os.path.join(self.directory, "skani")
-        os.makedirs(skani_dir, exist_ok=True)
-
-        # Collect all FASTA files from assemblies directory
-        fasta_files = []
-        for f in os.listdir(assemblies_dir):
-            if f.endswith(('.fasta', '.fa', '.fna')):
-                fasta_files.append(os.path.join(assemblies_dir, f))
-
-        if not fasta_files:
-            print("No FASTA files found in assemblies directory")
-            return
-
-        # Run SKANI against each sketch database
-        databases = ['pangenome', 'fitness', 'phenotype']
-        for db_name in databases:
-            print(f"Running SKANI against {db_name} database...")
-            try:
-                results = self.query_genomes(
-                    query_fasta=fasta_files,
-                    database_name=db_name,
-                    threads=self.worker_count
-                )
-
-                # Build output table: genome_id, reference_genome, ani_percentage
-                rows = []
-                for query_id, hits in results.items():
-                    for hit in hits:
-                        rows.append({
-                            'genome_id': query_id,
-                            'reference_genome': hit.get('reference', ''),
-                            'ani_percentage': hit.get('ani', 0.0)
-                        })
-
-                output_df = pd.DataFrame(rows)
-                output_path = os.path.join(skani_dir, f"skani_{db_name}.tsv")
-                output_df.to_csv(output_path, sep='\t', index=False)
-                print(f"  Saved {len(rows)} hits to {output_path}")
-
-            except Exception as e:
-                print(f"  Warning: SKANI analysis against {db_name} failed: {e}")
 
     def pipeline_run_pangenome_kberdl_query(self):
         """
@@ -369,281 +228,6 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
 
         except Exception as e:
             print(f"Error in BERDL pangenome query: {e}")
-
-    def pipeline_download_user_genome_genes(self):
-        """
-        Pipeline step for downloading genome genes and annotations.
-        Creates a TSV table per genome in self.directory/genomes/<genome_id>.tsv.
-
-        Uses KBAnnotationUtils.process_object to standardise features and
-        ontology terms.  Each distinct ontology type discovered on a genome's
-        features becomes its own column headed ``Annotation:<type>`` (e.g.
-        ``Annotation:SSO``, ``Annotation:KO``).  Individual terms within the
-        column are semicolon-separated and formatted as::
-
-            TERMID:description|rxn1,rxn2
-
-        where the reaction IDs are ModelSEED reaction mappings (omitted when
-        no mapping exists).
-        """
-        genomes_file = os.path.join(self.directory, "user_genomes.tsv")
-        df = pd.read_csv(genomes_file, sep='\t')
-
-        genomes_dir = os.path.join(self.directory, "genomes")
-        os.makedirs(genomes_dir, exist_ok=True)
-
-        for _, row in df.iterrows():
-            genome_id = row['genome_id']
-            genome_ref = row['genome_ref']
-
-            print(f"Downloading genes for {genome_id}...")
-            try:
-                # Load genome object into object_hash
-                obj = self.load_kbase_gene_container(genome_ref, localname=genome_id)
-                genome_data = obj["data"]
-                obj_type = (
-                    obj.get("info", [None] * 3)[2]
-                    if "info" in obj
-                    else "KBaseGenomes.Genome"
-                )
-
-                # Use KBAnnotationUtils.process_object to standardise
-                # features, aliases, and ontology terms in self.ftrhash
-                self.process_object({"object": genome_data, "type": obj_type})
-
-                # Discover all cleaned ontology types across this genome
-                all_ontology_types = set()
-                for ftr in self.ftrhash.values():
-                    for raw_tag in ftr.get("ontology_terms", {}):
-                        all_ontology_types.add(self.clean_tag(raw_tag))
-                sorted_ont_types = sorted(all_ontology_types)
-
-                # Build rows – only genes and noncoding features
-                gene_rows = []
-                for ftr_id, ftr in self.ftrhash.items():
-                    ftr_type = self.ftrtypes.get(ftr_id, 'Unknown')
-                    if ftr_type not in ('gene', 'noncoding'):
-                        continue
-                    # Aliases (upgrade_feature already normalised to [[src, val], ...])
-                    aliases = ftr.get("aliases", [])
-                    alias_str = (
-                        ";".join(f"{a[0]}:{a[1]}" for a in aliases if len(a) >= 2)
-                        if aliases else ""
-                    )
-
-                    # Location
-                    locations = ftr.get("location", [])
-                    contig = locations[0][0] if locations else ""
-                    start = locations[0][1] if locations else 0
-                    strand = locations[0][2] if locations else "+"
-                    length = locations[0][3] if locations else 0
-                    end = start + length if strand == "+" else start - length
-
-                    # Functions (upgrade_feature converted 'function' → 'functions' list)
-                    functions = ftr.get("functions", [])
-                    if isinstance(functions, list):
-                        functions_str = ";".join(functions)
-                    else:
-                        functions_str = str(functions) if functions else ""
-
-                    row_data = {
-                        'gene_id': ftr.get('id', ''),
-                        'aliases': alias_str,
-                        'contig': contig,
-                        'start': start,
-                        'end': end,
-                        'strand': strand,
-                        'type': ftr_type,
-                        'functions': functions_str,
-                        'protein_translation': ftr.get('protein_translation', ''),
-                        'dna_sequence': ftr.get('dna_sequence', ''),
-                    }
-
-                    # Add a column per ontology type
-                    for ont_type in sorted_ont_types:
-                        terms_list = []
-                        for raw_tag, terms_dict in ftr.get("ontology_terms", {}).items():
-                            if self.clean_tag(raw_tag) != ont_type:
-                                continue
-                            for raw_term in terms_dict:
-                                cleaned = self.clean_term(raw_term, raw_tag, ont_type)
-                                name = self.get_term_name(ont_type, cleaned)
-                                rxns = self.translate_term_to_modelseed(cleaned)
-                                entry = f"{cleaned}:{name}"
-                                if rxns:
-                                    entry += "|" + ",".join(rxns)
-                                terms_list.append(entry)
-                        row_data[f"Annotation:{ont_type}"] = (
-                            ";".join(terms_list) if terms_list else ""
-                        )
-
-                    gene_rows.append(row_data)
-
-                gene_df = pd.DataFrame(gene_rows)
-                output_path = os.path.join(genomes_dir, f"{genome_id}.tsv")
-                gene_df.to_csv(output_path, sep='\t', index=False)
-                ont_msg = ", ".join(sorted_ont_types) if sorted_ont_types else "none"
-                print(f"  Saved {len(gene_rows)} features for {genome_id} "
-                      f"(ontologies: {ont_msg})")
-
-            except Exception as e:
-                print(f"  Warning: Failed to download genes for {genome_id}: {e}")
-
-    def pipeline_annotate_user_genome_with_rast(self):
-        """
-        Pipeline step for annotating genomes with RAST.
-        Submits protein sequences for RAST annotation, translates the
-        returned function strings to SSO terms, and populates the
-        ``Annotation:SSO`` column in each genome TSV file.
-
-        Skips any genome whose TSV already contains a non-empty
-        ``Annotation:SSO`` column (e.g. from existing KBase annotations).
-        """
-        genomes_dir = os.path.join(self.directory, "genomes")
-        genome_files = [f for f in os.listdir(genomes_dir) if f.endswith('.tsv')]
-
-        rast_client = self.rast_client()
-
-        for genome_file in genome_files:
-            genome_id = genome_file.replace('.tsv', '')
-            filepath = os.path.join(genomes_dir, genome_file)
-
-            try:
-                df = pd.read_csv(filepath, sep='\t')
-
-                # Skip if Annotation:SSO already has data
-                if 'Annotation:SSO' in df.columns:
-                    non_empty = (
-                        df['Annotation:SSO']
-                        .fillna('')
-                        .astype(str)
-                        .str.strip()
-                        .ne('')
-                        .sum()
-                    )
-                    if non_empty > 0:
-                        print(f"  Skipping {genome_id}: Annotation:SSO already "
-                              f"populated ({non_empty} entries)")
-                        continue
-
-                print(f"Annotating {genome_id} with RAST...")
-
-                # Collect protein sequences for annotation
-                proteins = []
-                protein_indices = []
-                for idx, row in df.iterrows():
-                    protein = row.get('protein_translation', '')
-                    if pd.notna(protein) and protein:
-                        proteins.append(str(protein))
-                        protein_indices.append(idx)
-
-                if not proteins:
-                    if 'Annotation:SSO' not in df.columns:
-                        df['Annotation:SSO'] = ''
-                    df.to_csv(filepath, sep='\t', index=False)
-                    continue
-
-                # Call RAST annotate_proteins
-                result = rast_client.annotate_proteins({'proteins': proteins})
-                functions_list = result.get('functions', [])
-
-                # Translate RAST functions → SSO terms and populate column
-                sso_col = [''] * len(df)
-                for i, idx in enumerate(protein_indices):
-                    if i >= len(functions_list):
-                        continue
-                    funcs = functions_list[i]
-                    if isinstance(funcs, str):
-                        funcs = [funcs]
-                    if not isinstance(funcs, list):
-                        continue
-
-                    sso_entries = []
-                    for func_str in funcs:
-                        # Split multi-role function strings the same way
-                        # KBAnnotationUtils.upgrade_feature does
-                        roles = re.split(r"\s*;\s+|\s+[\@\/]\s+", func_str)
-                        for role in roles:
-                            role = role.strip()
-                            if not role:
-                                continue
-                            sso_id = self.translate_rast_function_to_sso(role)
-                            if sso_id is None:
-                                continue
-                            name = self.get_term_name("SSO", sso_id)
-                            rxns = self.translate_term_to_modelseed(sso_id)
-                            entry = f"{sso_id}:{name}"
-                            if rxns:
-                                entry += "|" + ",".join(rxns)
-                            sso_entries.append(entry)
-                    sso_col[idx] = ";".join(sso_entries)
-
-                df['Annotation:SSO'] = sso_col
-                df.to_csv(filepath, sep='\t', index=False)
-                annotated = sum(1 for x in sso_col if x)
-                print(f"  Added RAST/SSO annotations for {annotated}/"
-                      f"{len(protein_indices)} proteins in {genome_id}")
-
-            except Exception as e:
-                print(f"  Warning: RAST annotation failed for {genome_id}: {e}")
-
-    def pipeline_run_moddeling_analysis(self):
-        """
-        Pipeline step for building metabolic models for a list of genomes.
-        Runs in parallel using ProcessPoolExecutor.
-        """
-        models_dir = os.path.join(self.directory, "models")
-        os.makedirs(models_dir, exist_ok=True)
-
-        genome_dir = os.path.join(self.directory, "genomes")
-        genome_files = [f for f in os.listdir(genome_dir) if f.endswith('.tsv')]
-        genome_ids = [f.replace('.tsv', '') for f in genome_files]
-
-        print(f"\nBuilding {len(genome_ids)} models with {self.worker_count} workers")
-
-        # Prepare work items with all data needed by the worker
-        work_items = []
-        for genome_id in genome_ids:
-            genome_tsv = os.path.join(genome_dir, f"{genome_id}.tsv")
-            work_items.append({
-                'genome_id': genome_id,
-                'genome_tsv': genome_tsv,
-                'models_dir': models_dir,
-                'gapfill_media_ref': 'KBaseMedia/Carbon-Pyruvic-Acid'
-            })
-
-        errors = []
-        completed = 0
-
-        # Use ProcessPoolExecutor for true parallelism
-        with ProcessPoolExecutor(max_workers=self.worker_count) as executor:
-            future_to_genome = {
-                executor.submit(_build_single_model_worker, item): item['genome_id']
-                for item in work_items
-            }
-
-            for future in as_completed(future_to_genome):
-                genome_id = future_to_genome[future]
-                completed += 1
-                try:
-                    result = future.result()
-                    if result.get('success'):
-                        info = result.get('model_info', {})
-                        print(f"[{completed}/{len(genome_ids)}] {genome_id}: "
-                              f"{info.get('num_reactions', 0)} rxns, "
-                              f"{info.get('num_genes', 0)} genes, "
-                              f"class={info.get('genome_class', 'N/A')}")
-                    else:
-                        errors.append((genome_id, result.get('error', 'Unknown error')))
-                        print(f"[{completed}/{len(genome_ids)}] {genome_id}: FAILED - {result.get('error', 'Unknown')}")
-                except Exception as e:
-                    errors.append((genome_id, str(e)))
-                    print(f"[{completed}/{len(genome_ids)}] {genome_id}: EXCEPTION - {str(e)}")
-
-        if errors:
-            print(f"\n{len(errors)} models failed to build:")
-            for gid, err in errors:
-                print(f"  {gid}: {err}")
 
     def pipeline_run_ontology_term_kberdl_query(self, filename_datalake_db: str):
         """
@@ -775,168 +359,9 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
         Pipeline step for saving annotated genomes back to KBase.
         Uses annotation ontology API to save RAST annotations to genome objects.
         """
-        genomes_file = os.path.join(self.directory, "user_genomes.tsv")
-        genomes_dir = os.path.join(self.directory, "genomes")
-        df = pd.read_csv(genomes_file, sep='\t')
+        pass
 
-        suffix = self.app_parameters.get('suffix', '.datalake')
-        saved_refs = []
-
-        for _, row in df.iterrows():
-            genome_id = row['genome_id']
-            genome_ref = row['genome_ref']
-            genome_tsv = os.path.join(genomes_dir, f"{genome_id}.tsv")
-
-            if not os.path.exists(genome_tsv):
-                print(f"Warning: No genome TSV found for {genome_id}, skipping save")
-                continue
-
-            try:
-                gene_df = pd.read_csv(genome_tsv, sep='\t')
-
-                # Build annotations dict from RAST column
-                # Format: {gene_id: {ontology: {term: {"type": "RAST"}}}}
-                annotations = {}
-                for _, gene_row in gene_df.iterrows():
-                    gene_id = gene_row.get('gene_id', '')
-                    rast_funcs = gene_row.get('rast_functions', '')
-                    if pd.notna(rast_funcs) and rast_funcs:
-                        annotations[gene_id] = {}
-                        annotations[gene_id]['SSO'] = {}
-                        for func in str(rast_funcs).split(';'):
-                            func = func.strip()
-                            if func:
-                                annotations[gene_id]['SSO'][func] = {"type": "RAST"}
-
-                if annotations:
-                    # Load object info hash for add_annotations_to_object
-                    self.object_to_proteins(genome_ref)
-                    result = self.add_annotations_to_object(genome_ref, suffix, annotations)
-                    saved_ref = result.get('output_ref', '')
-                    if saved_ref:
-                        saved_refs.append(saved_ref)
-                    print(f"Saved annotated genome for {genome_id}: {saved_ref}")
-
-            except Exception as e:
-                print(f"Warning: Failed to save annotated genome {genome_id}: {e}")
-
-        # Create GenomeSet with all saved genomes
-        genome_set_name = self.app_parameters.get('genome_set_name', 'datalake_genomes')
-        if saved_refs:
-            genome_set_data = {
-                'description': f'Genome set from datalake pipeline with {len(saved_refs)} genomes',
-                'elements': {
-                    f"genome_{i}": {"ref": ref}
-                    for i, ref in enumerate(saved_refs)
-                }
-            }
-            self.set_ws(self.workspace_name)
-            params = {
-                "id": self.ws_id,
-                "objects": [{
-                    "data": genome_set_data,
-                    "name": genome_set_name,
-                    "type": "KBaseSearch.GenomeSet",
-                    "meta": {},
-                    "provenance": self.provenance(),
-                }]
-            }
-            self.ws_client().save_objects(params)
-            print(f"Saved GenomeSet '{genome_set_name}' with {len(saved_refs)} genomes")
-
-    def pipeline_save_models_to_kbase(self):
-        """
-        Pipeline step for saving metabolic models to the KBase workspace.
-        """
-        genomes_file = os.path.join(self.directory, "user_genomes.tsv")
-        models_dir = os.path.join(self.directory, "models")
-        df = pd.read_csv(genomes_file, sep='\t')
-
-        genome_ids = set(df['genome_id'].tolist())
-
-        for model_file in os.listdir(models_dir):
-            if not model_file.endswith('_model.json'):
-                continue
-
-            model_id = model_file.replace('_model.json', '')
-            # Convert safe ID back to check against genome_ids
-            original_id = model_id.replace('_', '.')
-            if model_id not in genome_ids and original_id not in genome_ids:
-                # Also check with underscore-replaced version
-                found = False
-                for gid in genome_ids:
-                    if gid.replace('.', '_') == model_id:
-                        found = True
-                        break
-                if not found:
-                    continue
-
-            model_path = os.path.join(models_dir, model_file)
-            try:
-                model = cobra.io.load_json_model(model_path)
-                mdlutl = MSModelUtil(model)
-                mdlutl.wsid = model_id
-                self.save_model(mdlutl, workspace=self.workspace_name, objid=model_id)
-                print(f"Saved model {model_id} to workspace {self.workspace_name}")
-            except Exception as e:
-                print(f"Warning: Failed to save model {model_id}: {e}")
-
-    def pipeline_run_phenotype_simulations(self):
-        """
-        Pipeline step for running phenotype simulations.
-        Runs simulations in parallel and saves results to self.directory/phenotypes.
-        """
-        models_dir = os.path.join(self.directory, "models")
-        phenotypes_dir = os.path.join(self.directory, "phenotypes")
-        os.makedirs(phenotypes_dir, exist_ok=True)
-
-        model_files = [f for f in os.listdir(models_dir) if f.endswith('_model.json')]
-        if not model_files:
-            print("No models found for phenotype simulation")
-            return
-
-        print(f"\nRunning phenotype simulations for {len(model_files)} models "
-              f"with {self.worker_count} workers")
-
-        # Prepare work items
-        work_items = []
-        for model_file in model_files:
-            model_id = model_file.replace('_model.json', '')
-            work_items.append({
-                'genome_id': model_id,
-                'directory': self.directory,
-                'max_phenotypes': 5,
-                'reference_path': self.reference_path
-            })
-
-        errors = []
-        completed = 0
-
-        with ProcessPoolExecutor(max_workers=self.worker_count) as executor:
-            future_to_model = {
-                executor.submit(_simulate_phenotypes_worker, item): item['genome_id']
-                for item in work_items
-            }
-
-            for future in as_completed(future_to_model):
-                model_id = future_to_model[future]
-                completed += 1
-                try:
-                    result = future.result()
-                    if result.get('success'):
-                        print(f"[{completed}/{len(model_files)}] {model_id}: "
-                              f"simulated {result.get('num_phenotypes', 0)} phenotypes")
-                    else:
-                        errors.append((model_id, result.get('error', 'Unknown')))
-                        print(f"[{completed}/{len(model_files)}] {model_id}: FAILED - {result.get('error')}")
-                except Exception as e:
-                    errors.append((model_id, str(e)))
-                    print(f"[{completed}/{len(model_files)}] {model_id}: EXCEPTION - {str(e)}")
-
-        # Build summary tables from individual phenotype results
-        self._build_phenotype_tables(phenotypes_dir)
-
-    def _build_phenotype_tables(self, phenotypes_dir):
+    def pipeline_phenotype_tables(self, phenotypes_dir):
         """Build summary phenotype tables from individual simulation results."""
         accuracy_rows = []
         gene_pheno_rows = []
@@ -1193,160 +618,7 @@ class KBDataLakeUtils(KBReadsUtils, KBGenomeUtils, SKANIUtils, MSReconstructionU
         except Exception as e:
             print(f"Warning: Failed to save KBase report: {e}")
 
-
-def _build_single_model_worker(work_item):
-    """
-    Worker function for parallel model building.
-    This runs in a separate process with its own memory space.
-
-    Args:
-        work_item: Dictionary with genome_id, genome_tsv, models_dir, gapfill_media_ref
-
-    Returns:
-        Dictionary with success status, model_info or error message
-    """
-    import os
-    import sys
-    import pandas as pd
-
-    # Re-setup paths for worker process
-    sys.path = [
-        "/deps/KBUtilLib/src",
-        "/deps/cobrakbase",
-        "/deps/ModelSEEDpy",
-    ] + sys.path
-
-    try:
-        import cobra
-        from modelseedpy.core.msgenome import MSGenome, MSFeature
-        from modelseedpy.core.msmodelutl import MSModelUtil
-        from kbutillib import MSReconstructionUtils
-
-        # Create a minimal util instance for this worker
-        class WorkerUtil(MSReconstructionUtils):
-            def __init__(self):
-                super().__init__(name="WorkerUtil")
-
-        worker_util = WorkerUtil()
-
-        genome_id = work_item['genome_id']
-        genome_tsv = work_item['genome_tsv']
-        models_dir = work_item['models_dir']
-        gapfill_media_ref = work_item.get('gapfill_media_ref')
-
-        # Clear MSModelUtil cache for this process
-        MSModelUtil.mdlutls.clear()
-
-        # Create safe model ID
-        safe_genome_id = genome_id.replace('.', '_')
-        model_path = os.path.join(models_dir, f'{safe_genome_id}_model.json')
-
-        # Load features from genome TSV
-        gene_df = pd.read_csv(genome_tsv, sep='\t')
-
-        # Create MSGenome from features
-        genome = MSGenome()
-        genome.id = safe_genome_id
-        genome.scientific_name = genome_id
-
-        ms_features = []
-        for _, gene in gene_df.iterrows():
-            protein = gene.get('protein_translation', '')
-            gene_id = gene.get('gene_id', '')
-            if pd.notna(protein) and protein:
-                feature = MSFeature(gene_id, str(protein))
-                # Parse Annotation:SSO column
-                # Format: SSO:nnnnn:description|rxn1,rxn2;SSO:mmmmm:desc2|rxn3
-                sso_col = gene.get('Annotation:SSO', '')
-                if pd.notna(sso_col) and sso_col:
-                    for entry in str(sso_col).split(';'):
-                        entry = entry.strip()
-                        if not entry:
-                            continue
-                        term_part = entry.split('|')[0]
-                        parts = term_part.split(':')
-                        if len(parts) >= 2 and parts[0] == 'SSO':
-                            sso_id = parts[0] + ':' + parts[1]
-                            feature.add_ontology_term('SSO', sso_id)
-                            # Extract description for classifier
-                            if len(parts) >= 3:
-                                description = ':'.join(parts[2:])
-                                if description:
-                                    feature.add_ontology_term('RAST', description)
-                ms_features.append(feature)
-
-        genome.add_features(ms_features)
-
-        # Load classifier
-        genome_classifier = worker_util.get_classifier()
-
-        # Build the model
-        current_output, mdlutl = worker_util.build_metabolic_model(
-            genome=genome,
-            genome_classifier=genome_classifier,
-            model_id=safe_genome_id,
-            model_name=genome_id,
-            gs_template="auto",
-            atp_safe=True,
-            load_default_medias=True,
-            max_gapfilling=10,
-            gapfilling_delta=0,
-        )
-
-        if mdlutl is None:
-            return {
-                'success': False,
-                'error': f"Model build returned None: {current_output.get('Comments', ['Unknown'])}"
-            }
-
-        model = mdlutl.model
-
-        # Gapfill if media specified
-        gf_rxns = 0
-        growth = 'NA'
-        if gapfill_media_ref:
-            gapfill_media = worker_util.get_media(gapfill_media_ref)
-            gf_output, _, _, _ = worker_util.gapfill_metabolic_model(
-                mdlutl=mdlutl,
-                genome=genome,
-                media_objs=[gapfill_media],
-                templates=[model.template],
-                atp_safe=True,
-                objective='bio1',
-                minimum_objective=0.01,
-                gapfilling_mode="Sequential",
-            )
-            gf_rxns = gf_output.get('GS GF', 0)
-            growth = gf_output.get('Growth', 'Unknown')
-
-        # Save model
-        cobra.io.save_json_model(model, model_path)
-
-        genome_class = current_output.get('Class', 'Unknown')
-        core_gf = current_output.get('Core GF', 0)
-
-        return {
-            'success': True,
-            'model_info': {
-                'model_id': model.id,
-                'num_reactions': len(model.reactions),
-                'num_metabolites': len(model.metabolites),
-                'num_genes': len(model.genes),
-                'genome_class': genome_class,
-                'core_gapfill': core_gf,
-                'gs_gapfill': gf_rxns,
-                'growth': growth
-            }
-        }
-
-    except Exception as e:
-        import traceback
-        return {
-            'success': False,
-            'error': f"{str(e)}\n{traceback.format_exc()}"
-        }
-
-def _simulate_phenotypes_worker(work_item):
+def run_phenotype_simulation(model_filename,output_filename,max_phenotypes=5):
     """
     Worker function for parallel phenotype simulation.
     This runs in a separate process with its own memory space.
@@ -1357,111 +629,385 @@ def _simulate_phenotypes_worker(work_item):
     Returns:
         Dictionary with success status and simulation results
     """
-    import os
-    import sys
-    import json
-    import cobra
-    from modelseedpy import MSGrowthPhenotypes, MSATPCorrection,MSGapfill,MSModelUtil
+    # Create safe model ID
+    genome_id = os.path.splitext(os.path.basename(model_filename))[0]
+    reference_path = "/data/reference_data"
 
-    sys.path = [
-        "/deps/KBUtilLib/src",
-        "/deps/cobrakbase",
-        "/deps/ModelSEEDpy",
-    ] + sys.path
+    # Load model
+    model = cobra.io.load_json_model(model_filename)
+    mdlutl = MSModelUtil(model)
 
-    try:
-        genome_id = work_item['genome_id']
-        phenotypes_dir = work_item['directory'] + '/phenotypes/'
-        reference_path = work_item['reference_path']
+    #Loading the phenotype set from the reference path
+    filename = reference_path + "/phenotypes/full_phenotype_set.json"
+    with open(filename) as f:
+        phenoset_data = json.load(f)
+    #Setting max phenotypes if specified in the work item
+    if max_phenotypes is not None:
+        phenoset_data["phenotypes"] = phenoset_data["phenotypes"][:max_phenotypes]
+    #Instantiating the phenotype set
+    phenoset = MSGrowthPhenotypes.from_dict(phenoset_data)
 
-        # Load model
-        model = cobra.io.load_json_model(work_item['directory'] + '/models/' + genome_id + '_model.json')
-        mdlutl = MSModelUtil(model)
+    # Create a minimal util instance for this worker
+    class PhenotypeWorkerUtil(MSReconstructionUtils,MSFBAUtils,MSBiochemUtils):
+        def __init__(self, kbversion):
+            super().__init__(name="PhenotypeWorkerUtil", kbversion=kbversion)
+    pheno_util = PhenotypeWorkerUtil(kbversion=global_kbversion)
 
-        #Loading the phenotype set from the reference path
-        filename = reference_path + "/phenotypes/full_phenotype_set.json"
-        with open(filename) as f:
-            phenoset_data = json.load(f)
-        #Setting max phenotypes if specified in the work item
-        if "max_phenotypes" in work_item:
-            phenoset_data["phenotypes"] = phenoset_data["phenotypes"][:work_item["max_phenotypes"]]
-        #Instantiating the phenotype set
-        phenoset = MSGrowthPhenotypes.from_dict(phenoset_data)
+    # Get template for gapfilling
+    template = pheno_util.get_template(pheno_util.templates["gn"], None)
 
-        # Create a minimal util instance for this worker
-        class PhenotypeWorkerUtil(MSReconstructionUtils,MSFBAUtils,MSBiochemUtils):
-            def __init__(self):
-                super().__init__(name="PhenotypeWorkerUtil")
-        pheno_util = PhenotypeWorkerUtil()
+    # Retrieve ATP test conditions from the model
+    atpcorrection = MSATPCorrection(mdlutl)
+    atp_tests = atpcorrection.build_tests()
 
-        # Get template for gapfilling
-        template = pheno_util.get_template(pheno_util.templates["gn"], None)
+    # Create gapfiller with ATP test conditions
+    gapfiller = MSGapfill(
+        mdlutl,
+        default_gapfill_templates=[template],
+        default_target='bio1',
+        minimum_obj=0.01,
+        test_conditions=[atp_tests[0]]
+    )
+    pheno_util.set_media(gapfiller.gfmodelutl, "KBaseMedia/Carbon-Pyruvic-Acid")
 
-        # Retrieve ATP test conditions from the model
-        atpcorrection = MSATPCorrection(mdlutl)
-        atp_tests = atpcorrection.build_tests()
+    # Prefilter gapfilling database with ATP test conditions
+    #print("Prefiltering gapfilling database...")
+    #gapfiller.prefilter()
+    #print("Prefiltering complete")
 
-        # Create gapfiller with ATP test conditions
-        gapfiller = MSGapfill(
-            mdlutl,
-            default_gapfill_templates=[template],
-            default_target='bio1',
-            minimum_obj=0.01,
-            test_conditions=[atp_tests[0]]
-        )
-        pheno_util.set_media(gapfiller.gfmodelutl, "KBaseMedia/Carbon-Pyruvic-Acid")
+    # Filter out mass imbalanced (MI) reactions from the gapfill model
+    mi_blocked_count = 0
+    reaction_scores = {}
+    for rxn in gapfiller.gfmodelutl.model.reactions:
+        # Extract the base ModelSEED reaction ID (rxnXXXXX) from the reaction ID
+        if rxn.id not in mdlutl.model.reactions and rxn.id in gapfiller.gfpkgmgr.getpkg("GapfillingPkg").gapfilling_penalties:
+            reaction_scores[rxn.id] = {
+                "<": 10 * gapfiller.gfpkgmgr.getpkg("GapfillingPkg").gapfilling_penalties[rxn.id].get("reverse", 1),
+                ">": 10 * gapfiller.gfpkgmgr.getpkg("GapfillingPkg").gapfilling_penalties[rxn.id].get("forward", 1)
+            }
+        ms_rxn_id = pheno_util.reaction_id_to_msid(rxn.id)
+        if ms_rxn_id:
+            ms_rxn = pheno_util.get_reaction_by_id(ms_rxn_id)
+            if ms_rxn and hasattr(ms_rxn, 'status') and ms_rxn.status and "MI" in ms_rxn.status:
+                reaction_scores[rxn.id] = {"<":1000,">":1000}
+                # Check if status contains "MI" (mass imbalanced)
+                if rxn.id not in mdlutl.model.reactions:
+                    #If reaction is not in model, set bounds to 0
+                    rxn.lower_bound = 0
+                    rxn.upper_bound = 0
+                    mi_blocked_count += 1
 
-        # Prefilter gapfilling database with ATP test conditions
-        #print("Prefiltering gapfilling database...")
-        #gapfiller.prefilter()
-        #print("Prefiltering complete")
+    # Run simulations with gapfilling for zero-growth phenotypes
+    # Note: test_conditions=None since we already ran prefilter
+    results = phenoset.simulate_phenotypes(
+        mdlutl,
+        add_missing_exchanges=True,
+        gapfill_negatives=True,
+        msgapfill=gapfiller,
+        test_conditions=None,
+        ignore_experimental_data=True,
+        annoont=None,
+        growth_threshold=0.01,
+        #reaction_scores=reaction_scores
+    )
 
-        # Filter out mass imbalanced (MI) reactions from the gapfill model
-        mi_blocked_count = 0
-        reaction_scores = {}
-        for rxn in gapfiller.gfmodelutl.model.reactions:
-            # Extract the base ModelSEED reaction ID (rxnXXXXX) from the reaction ID
-            if rxn.id not in mdlutl.model.reactions and rxn.id in gapfiller.gfpkgmgr.getpkg("GapfillingPkg").gapfilling_penalties:
-                reaction_scores[rxn.id] = {
-                    "<": 10 * gapfiller.gfpkgmgr.getpkg("GapfillingPkg").gapfilling_penalties[rxn.id].get("reverse", 1),
-                    ">": 10 * gapfiller.gfpkgmgr.getpkg("GapfillingPkg").gapfilling_penalties[rxn.id].get("forward", 1)
-                }
-            ms_rxn_id = pheno_util.reaction_id_to_msid(rxn.id)
-            if ms_rxn_id:
-                ms_rxn = pheno_util.get_reaction_by_id(ms_rxn_id)
-                if ms_rxn and hasattr(ms_rxn, 'status') and ms_rxn.status and "MI" in ms_rxn.status:
-                    reaction_scores[rxn.id] = {"<":1000,">":1000}
-                    # Check if status contains "MI" (mass imbalanced)
-                    if rxn.id not in mdlutl.model.reactions:
-                        #If reaction is not in model, set bounds to 0
-                        rxn.lower_bound = 0
-                        rxn.upper_bound = 0
-                        mi_blocked_count += 1
+    output_dir = os.path.dirname(output_filename)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    with open(output_filename, "w") as f:
+        json.dump(results, f, indent=4, skipkeys=True)
 
-        # Run simulations with gapfilling for zero-growth phenotypes
-        # Note: test_conditions=None since we already ran prefilter
-        results = phenoset.simulate_phenotypes(
-            mdlutl,
-            add_missing_exchanges=True,
-            gapfill_negatives=True,
-            msgapfill=gapfiller,
-            test_conditions=None,
-            ignore_experimental_data=True,
-            annoont=None,
-            growth_threshold=0.01,
-            #reaction_scores=reaction_scores
-        )
+    return {"success": True, "genome_id": genome_id}
 
-        os.makedirs(phenotypes_dir, exist_ok=True)
-        with open(phenotypes_dir+"/"+genome_id+".json", "w") as f:
-            json.dump(results, f, indent=4, skipkeys=True)
+def run_model_reconstruction(input_filename,output_filename):
+    worker_util = MSReconstructionUtils(kbversion=global_kbversion)
 
-        return {"success": True, "genome_id": genome_id}
+    # Clear MSModelUtil cache for this process
+    MSModelUtil.mdlutls.clear()
 
-    except Exception as e:
-        import traceback
+    # Create safe model ID
+    genome_id = os.path.splitext(os.path.basename(input_filename))[0]
+    print(f'genome_id: {genome_id}')
+    # Load features from genome TSV
+    gene_df = pd.read_csv(input_filename, sep='\t')
+
+    # Create MSGenome from features
+    genome = MSGenome()
+    genome.id = genome_id
+    genome.scientific_name = genome_id
+
+    # Detect TSV format based on columns present
+    columns = set(gene_df.columns)
+    is_simple_format = 'id' in columns and 'functions' in columns and 'protein_translation' not in columns
+    print(f'TSV format detected: {"simple (id, function)" if is_simple_format else "full genome TSV"}')
+
+    ms_features = []
+    for _, gene in gene_df.iterrows():
+        if is_simple_format:
+            # Simple format: columns are 'id' and 'function'
+            # 'function' is pipe-delimited list of RAST descriptions
+            gene_id_val = gene.get('id', '')
+            if pd.notna(gene_id_val) and gene_id_val:
+                feature = MSFeature(str(gene_id_val), '')  # No protein sequence in simple format
+                func_col = gene.get('function', '')
+                if pd.notna(func_col) and func_col:
+                    # Split on pipe delimiter for multiple RAST functions
+                    for func_desc in str(func_col).split('|'):
+                        func_desc = func_desc.strip()
+                        if func_desc:
+                            feature.add_ontology_term('RAST', func_desc)
+                ms_features.append(feature)
+        else:
+            # Full genome TSV format
+            protein = gene.get('protein_translation', '')
+            gene_id_val = gene.get('gene_id', '')
+            if pd.notna(protein) and protein:
+                feature = MSFeature(str(gene_id_val), str(protein))
+
+                # Parse plain functions column for RAST descriptions
+                # Format: "Threonine synthase (EC 4.2.3.1)" or "Func1;Func2"
+                func_col = gene.get('functions', '')
+                if pd.notna(func_col) and func_col:
+                    for func_desc in str(func_col).split(';'):
+                        func_desc = func_desc.strip()
+                        if func_desc:
+                            feature.add_ontology_term('RAST', func_desc)
+
+                # Parse Annotation:SSO column for SSO IDs
+                # Format: SSO:nnnnn:description|MSRXN:rxn1,rxn2;SSO:mmmmm:desc2|rxn3
+                sso_col = gene.get('Annotation:SSO', '')
+                if pd.notna(sso_col) and sso_col:
+                    for entry in str(sso_col).split(';'):
+                        entry = entry.strip()
+                        if not entry:
+                            continue
+                        term_part = entry.split('|')[0]
+                        parts = term_part.split(':')
+                        if len(parts) >= 2 and parts[0] == 'SSO':
+                            sso_id = parts[1]
+                            feature.add_ontology_term('SSO', sso_id)
+
+                ms_features.append(feature)
+
+    genome.add_features(ms_features)
+
+    # Load classifier
+    genome_classifier = worker_util.get_classifier()
+
+    # Build the model
+    current_output, mdlutl = worker_util.build_metabolic_model(
+        genome=genome,
+        genome_classifier=genome_classifier,
+        model_id=genome_id,
+        model_name=genome_id,
+        gs_template="auto",
+        atp_safe=True,
+        load_default_medias=True,
+        max_gapfilling=10,
+        gapfilling_delta=0,
+    )
+
+    if mdlutl is None:
         return {
             'success': False,
-            'model_id': work_item.get('model_id', 'unknown'),
-            'error': f"{str(e)}\n{traceback.format_exc()}"
+            'error': f"Model build returned None: {current_output.get('Comments', ['Unknown'])}"
         }
+
+    model = mdlutl.model
+
+    # Gapfill if media specified
+    gf_rxns = 0
+    growth = 'NA'
+    gapfill_media = worker_util.get_media("KBaseMedia/Carbon-Pyruvic-Acid")
+    gf_output, _, _, _ = worker_util.gapfill_metabolic_model(
+        mdlutl=mdlutl,
+        genome=genome,
+        media_objs=[gapfill_media],
+        templates=[model.template],
+        atp_safe=True,
+        objective='bio1',
+        minimum_objective=0.01,
+        gapfilling_mode="Sequential",
+    )
+    gf_rxns = gf_output.get('GS GF', 0)
+    growth = gf_output.get('Growth', 'Unknown')
+
+    # Save model
+    cobra.io.save_json_model(model, output_filename+"_cobra.json")
+
+    genome_class = current_output.get('Class', 'Unknown')
+    core_gf = current_output.get('Core GF', 0)
+
+    # Get minimal and rich media for analysis
+    minimal_media = gapfill_media  # Use the gapfill media as minimal
+    rich_media = worker_util.get_media("KBaseMedia/Complete")
+
+    # Collect gapfilled reactions by category
+    core_gf_rxns = []
+    minimal_gf_rxns = []
+    rich_gf_rxns = []
+
+    # Get gapfilled reactions from model attributes
+    if hasattr(mdlutl, 'attributes') and 'gapfilling' in mdlutl.attributes:
+        for gf_entry in mdlutl.attributes['gapfilling']:
+            media_id = gf_entry.get('media', {}).get('id', '')
+            for rxn_id in gf_entry.get('reactions', []):
+                if 'core' in media_id.lower() or gf_entry.get('target', '') == 'core':
+                    if rxn_id not in core_gf_rxns:
+                        core_gf_rxns.append(rxn_id)
+                else:
+                    if rxn_id not in minimal_gf_rxns:
+                        minimal_gf_rxns.append(rxn_id)
+
+    # Run FVA in rich media to identify essential gapfilled reactions
+    all_gf_rxns = list(set(core_gf_rxns + minimal_gf_rxns))
+    if all_gf_rxns and rich_media:
+        mdlutl.pkgmgr.getpkg("KBaseMediaPkg").build_package(rich_media)
+        try:
+            fva_result = cobra.flux_analysis.flux_variability_analysis(
+                model,
+                reaction_list=[model.reactions.get_by_id(rxn_id) for rxn_id in all_gf_rxns if rxn_id in model.reactions],
+                fraction_of_optimum=0.001
+            )
+            for rxn_id in all_gf_rxns:
+                if rxn_id in fva_result.index:
+                    min_flux = fva_result.loc[rxn_id, 'minimum']
+                    max_flux = fva_result.loc[rxn_id, 'maximum']
+                    # If flux bounds don't include zero, reaction is essential
+                    if min_flux > 1e-6 or max_flux < -1e-6:
+                        if rxn_id not in rich_gf_rxns:
+                            rich_gf_rxns.append(rxn_id)
+        except Exception as e:
+            print(f"Warning: Rich media FVA failed: {e}")
+
+    # Run pFBA and FVA analysis in minimal media
+    minimal_pfba_fluxes = {}
+    minimal_fva_classes = {}
+    mdlutl.pkgmgr.getpkg("KBaseMediaPkg").build_package(minimal_media)
+    try:
+        # pFBA in minimal media
+        pfba_solution = cobra.flux_analysis.pfba(model)
+        if pfba_solution.status == 'optimal':
+            minimal_pfba_fluxes = {rxn.id: pfba_solution.fluxes[rxn.id] for rxn in model.reactions}
+
+        # FVA in minimal media for classification
+        fva_minimal = cobra.flux_analysis.flux_variability_analysis(model, fraction_of_optimum=0.001)
+        for rxn in model.reactions:
+            if rxn.id in fva_minimal.index:
+                min_f = fva_minimal.loc[rxn.id, 'minimum']
+                max_f = fva_minimal.loc[rxn.id, 'maximum']
+                if abs(min_f) < 1e-6 and abs(max_f) < 1e-6:
+                    minimal_fva_classes[rxn.id] = 'blocked'
+                elif min_f > 1e-6:
+                    minimal_fva_classes[rxn.id] = 'essential_forward'
+                elif max_f < -1e-6:
+                    minimal_fva_classes[rxn.id] = 'essential_reverse'
+                elif min_f < -1e-6 and max_f > 1e-6:
+                    minimal_fva_classes[rxn.id] = 'reversible'
+                elif max_f > 1e-6:
+                    minimal_fva_classes[rxn.id] = 'forward_only'
+                elif min_f < -1e-6:
+                    minimal_fva_classes[rxn.id] = 'reverse_only'
+                else:
+                    minimal_fva_classes[rxn.id] = 'variable'
+    except Exception as e:
+        print(f"Warning: Minimal media analysis failed: {e}")
+
+    # Run pFBA and FVA analysis in rich media
+    rich_pfba_fluxes = {}
+    rich_fva_classes = {}
+    if rich_media:
+        mdlutl.pkgmgr.getpkg("KBaseMediaPkg").build_package(rich_media)
+        try:
+            # pFBA in rich media
+            pfba_solution = cobra.flux_analysis.pfba(model)
+            if pfba_solution.status == 'optimal':
+                rich_pfba_fluxes = {rxn.id: pfba_solution.fluxes[rxn.id] for rxn in model.reactions}
+
+            # FVA in rich media for classification
+            fva_rich = cobra.flux_analysis.flux_variability_analysis(model, fraction_of_optimum=0.001)
+            for rxn in model.reactions:
+                if rxn.id in fva_rich.index:
+                    min_f = fva_rich.loc[rxn.id, 'minimum']
+                    max_f = fva_rich.loc[rxn.id, 'maximum']
+                    if abs(min_f) < 1e-6 and abs(max_f) < 1e-6:
+                        rich_fva_classes[rxn.id] = 'blocked'
+                    elif min_f > 1e-6:
+                        rich_fva_classes[rxn.id] = 'essential_forward'
+                    elif max_f < -1e-6:
+                        rich_fva_classes[rxn.id] = 'essential_reverse'
+                    elif min_f < -1e-6 and max_f > 1e-6:
+                        rich_fva_classes[rxn.id] = 'reversible'
+                    elif max_f > 1e-6:
+                        rich_fva_classes[rxn.id] = 'forward_only'
+                    elif min_f < -1e-6:
+                        rich_fva_classes[rxn.id] = 'reverse_only'
+                    else:
+                        rich_fva_classes[rxn.id] = 'variable'
+        except Exception as e:
+            print(f"Warning: Rich media analysis failed: {e}")
+
+    # Build metabolite list as JSON dictionaries
+    metabolites_list = []
+    for met in model.metabolites:
+        met_dict = {
+            'id': met.id,
+            'name': met.name,
+            'formula': met.formula,
+            'charge': met.charge,
+            'compartment': met.compartment,
+            'annotation': dict(met.annotation) if met.annotation else {}
+        }
+        metabolites_list.append(met_dict)
+
+    # Build reaction list as JSON dictionaries
+    reactions_list = []
+    for rxn in model.reactions:
+        rxn_dict = {
+            'id': rxn.id,
+            'name': rxn.name,
+            'reaction': rxn.reaction,
+            'lower_bound': rxn.lower_bound,
+            'upper_bound': rxn.upper_bound,
+            'gene_reaction_rule': rxn.gene_reaction_rule,
+            'subsystem': rxn.subsystem if hasattr(rxn, 'subsystem') else '',
+            'annotation': dict(rxn.annotation) if rxn.annotation else {},
+            'metabolites': {met.id: coef for met, coef in rxn.metabolites.items()}
+        }
+        reactions_list.append(rxn_dict)
+
+    # Build the comprehensive output data
+    output_data = {
+        'success': True,
+        'model_info': {
+            'model_id': model.id,
+            'num_reactions': len(model.reactions),
+            'num_metabolites': len(model.metabolites),
+            'num_genes': len(model.genes),
+            'genome_class': genome_class,
+            'core_gapfill': core_gf,
+            'gs_gapfill': gf_rxns,
+            'growth': growth
+        },
+        'metabolites': metabolites_list,
+        'reactions': reactions_list,
+        'gapfilled_reactions': {
+            'core': core_gf_rxns,
+            'minimal_media': minimal_gf_rxns,
+            'rich_media_essential': rich_gf_rxns
+        },
+        'flux_analysis': {
+            'minimal_media': {
+                'pfba_fluxes': minimal_pfba_fluxes,
+                'fva_classes': minimal_fva_classes
+            },
+            'rich_media': {
+                'pfba_fluxes': rich_pfba_fluxes,
+                'fva_classes': rich_fva_classes
+            }
+        }
+    }
+
+    # Save to JSON file
+    with open(output_filename + "_data.json", 'w') as f:
+        json.dump(output_data, f, indent=2)
