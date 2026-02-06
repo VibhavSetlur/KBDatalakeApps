@@ -23,6 +23,8 @@ from modelseedpy.core.msgenome import MSGenome, MSFeature
 from cobrakbase import KBaseAPI
 from installed_clients.baseclient import ServerError
 from annotation.annotation import test_annotation, run_rast, run_kofam
+from executor.task_executor import TaskExecutor
+from executor.task import task_rast, task_kofam, task_psortb
 from KBDatalakeApps.KBDatalakeFunctions import run_phenotype_simulation,run_model_reconstruction,run_user_genome_to_tsv,get_util_instance
 
 # Import KBUtilLib utilities for common functionality
@@ -253,7 +255,8 @@ Author: chenry
         if os.path.exists('/data') and os.path.exists('/data/reference_data'):
             print(os.listdir('/data/reference_data'))
 
-        test_annotation(self.kb_kofam, self.kb_bakta, self.kb_psortb, self.rast_client)
+        if not skip_annotation:
+            test_annotation(self.kb_kofam, self.kb_bakta, self.kb_psortb, self.rast_client)
 
 
         #print('BERDL Token')
@@ -271,6 +274,18 @@ Author: chenry
             self.run_genome_pipeline(input_params.resolve())
         else:
             print('skip genome pipeline')
+
+        executor = TaskExecutor(max_workers=4)
+        path_user_genome = Path(self.shared_folder) / "genome"
+        path_user_genome.mkdir(parents=True, exist_ok=True)
+        for filename_faa in os.listdir(str(path_user_genome)):
+            if filename_faa.endswith('.faa'):
+                print('found', filename_faa)
+                if skip_annotation:
+                    print('skip_annotation')
+                else:
+                    executor.run_task(task_rast, str(path_user_genome / filename_faa), self.rast_client)
+                    executor.run_task(task_kofam, str(path_user_genome / filename_faa), self.kb_kofam)
 
         path_pangenome = Path(self.shared_folder) / "pangenome"
         path_pangenome.mkdir(parents=True, exist_ok=True)

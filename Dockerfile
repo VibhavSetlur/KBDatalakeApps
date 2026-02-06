@@ -29,6 +29,13 @@ RUN /root/.local/bin/uv venv --python 3.10 /opt/env/berdl_genomes
 
 # setup modelseedpy ml env
 RUN /root/.local/bin/uv venv --python 3.10 /opt/env/modelseedpy_ml
+RUN /root/.local/bin/uv pip install --python /opt/env/modelseedpy_ml --no-progress \
+    git+https://github.com/ModelSEED/ModelSEEDpy.git@d109a897ac4b22c8ae2a78c963ad6ce01af9ce6a
+RUN mkdir -p /kb/module/data
+RUN wget -O /kb/module/data/knn_ACNP_RAST_full_01_17_2023_features.json -q \
+    https://bioseed.mcs.anl.gov/~fliu/modelseedpy/knn_ACNP_RAST_full_01_17_2023_features.json
+RUN wget -O /kb/module/data/knn_ACNP_RAST_full_01_17_2023.pickle -q \
+    https://bioseed.mcs.anl.gov/~fliu/modelseedpy/knn_ACNP_RAST_full_01_17_2023.pickle
 
 # Copy in the SDK
 COPY --from=kbase/kb-sdk:1.2.1 /src /sdk
