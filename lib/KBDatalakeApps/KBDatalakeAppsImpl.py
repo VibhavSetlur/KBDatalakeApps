@@ -295,27 +295,17 @@ Author: chenry
                 else:
                     print('skip pangenome')
 
-        path_user_genome = Path(self.shared_folder) / "genome"
-        path_user_genome.mkdir(parents=True, exist_ok=True)
-        t_start_time = time.perf_counter()
-        for filename_faa in os.listdir(str(path_user_genome)):
-            print('found', filename_faa)
-            if skip_annotation:
-                print('skip_annotation')
-            else:
-                if filename_faa.endswith('.faa'):
-                    input_genome_file = str(path_user_genome / filename_faa)
-                    try:
-                        output_annotation = path_user_genome / f'{filename_faa[:-4]}_kofam.tsv'
-                        run_kofam(self.kb_kofam, input_genome_file, output_annotation)
-                    except Exception as ex:
-                        print(f'nope {ex}')
+        path_pangenome = Path(self.shared_folder) / "pangenome"
+        path_pangenome.mkdir(parents=True, exist_ok=True)
+        for folder_pangenome in os.listdir(str(path_pangenome)):
+            if os.path.isdir(f'{path_pangenome}/{folder_pangenome}'):
+                print(f'Found pangenome folder: {folder_pangenome}')
+                path_pangenome_members = path_pangenome / folder_pangenome / 'genome'
+                if path_pangenome_members.exists():
+                    for _f in os.listdir(str(path_pangenome_members)):
+                        if _f.endswith('.faa'):
+                            executor.run_task(task_rast, str(path_pangenome_members / _f), self.rast_client)
 
-                    try:
-                        output_annotation = path_user_genome / f'{filename_faa[:-4]}_rast.tsv'
-                        run_rast(self.rast_client, input_genome_file, output_annotation)
-                    except Exception as ex:
-                        print(f'nope {ex}')
 
                     """
                     try:
@@ -382,8 +372,8 @@ Author: chenry
         else:
             print('skip modeling pipeline')
 
-        t_end_time = time.perf_counter()
-        print(f"Total Execution time annotation: {t_end_time - t_start_time} seconds")
+        #t_end_time = time.perf_counter()
+        #print(f"Total Execution time annotation: {t_end_time - t_start_time} seconds")
 
         print_path(Path(self.shared_folder).resolve())
 
