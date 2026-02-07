@@ -22,6 +22,7 @@ class BERDLPangenome:
             '--cov-mode', '0',
             '-c', '0.80',
             str(filename_faa.resolve()),
+            filename_faa.name[:-4],
             'tmp',
         ]
         print(f'mmseqs2 run {" ".join(cmd)}')
