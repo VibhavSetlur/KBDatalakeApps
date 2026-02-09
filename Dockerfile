@@ -98,7 +98,7 @@ RUN git clone https://github.com/cshenry/ModelSEEDpy.git && pip install --use-de
 RUN echo '0' >/dev/null && cd /deps && \
     git clone https://github.com/cshenry/cobrakbase.git && \
     cd cobrakbase && git checkout 68444e46fe3b68482da80798642461af2605e349
-RUN echo '3' >/dev/null && cd /deps && \
+RUN echo '4' >/dev/null && cd /deps && \
     git clone https://github.com/cshenry/KBUtilLib.git
 RUN echo '0' >/dev/null && cd /deps && \
     git clone https://github.com/kbaseapps/cb_annotation_ontology_api.git

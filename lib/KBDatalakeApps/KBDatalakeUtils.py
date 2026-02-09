@@ -30,17 +30,14 @@ except ImportError:
     OntologyEnrichment = None
 """
 
-global_kbversion = "prod"
-
 class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
-    def __init__(self,kbversion,**kwargs):
+    def __init__(self,reference_path,module_path,**kwargs):
         super().__init__(
                 name="KBDataLakeUtils",
-                kbversion=kbversion,
                 **kwargs
         )
-        global global_kbversion
-        global_kbversion = kbversion
+        self.module_path = module_path
+        self.reference_path = reference_path
 
     def run_user_genome_to_tsv(self,genome_ref,output_filename):
         # Load genome object into object_hash
@@ -415,6 +412,212 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
 
         print(f"Built phenotype summary tables in {phenotypes_dir}")
 
+    def build_phenotype_tables(self, phenotypes_dir, phenosim_directory, experiment_data_file=None, phenoset_file=None):
+        """
+        Pipeline step for building phenotype experimental data, genome phenotype, and gene phenotype tables.
+
+        Reads individual per-genome phenosim JSON files from phenosim_directory.
+        Each file is named {genome_id}.json and contains:
+          - data: dict keyed by cpd_id with objective_value, class, reactions,
+                  gfreactions, gapfill_count, fluxes, etc.
+          - data.summary: dict with accuracy, CP, CN, FP, FN, P, N
+
+        Creates three TSV files:
+        1. model_performance.tsv - Model accuracy metrics per genome
+        2. genome_phenotypes.tsv - Phenotype predictions per genome
+        3. gene_phenotypes.tsv - Gene-phenotype associations from gapfilled reactions
+
+        Args:
+            phenotypes_dir: Directory to save output TSV files
+            phenosim_directory: Directory containing per-genome phenosim JSON files
+            experiment_data_file: Path to experimental_data.json (optional)
+            phenoset_file: Path to full_phenotype_set.json (optional)
+        """
+        # Default file paths
+        if phenoset_file is None:
+            phenoset_file = os.path.join(self.module_path, "data/full_phenotype_set.json")
+        if experiment_data_file is None:
+            experiment_data_file = os.path.join(self.module_path, "data/experimental_data.json")
+
+        # Load phenotype set for compound names
+        cpd_names = {}
+        if os.path.exists(phenoset_file):
+            with open(phenoset_file) as f:
+                phenoset_data = json.load(f)
+            for pheno in phenoset_data.get("phenotypes", []):
+                cpd_names[pheno["id"]] = pheno.get("name", pheno["id"])
+
+        # Load experimental data indexed by genome
+        genome_experiment_data = {}
+        if os.path.exists(experiment_data_file):
+            with open(experiment_data_file) as f:
+                experiment_data = json.load(f)
+            for _, item_val in experiment_data.items():
+                genome_id = item_val["genome_id"]
+                if genome_id not in genome_experiment_data:
+                    genome_experiment_data[genome_id] = {}
+                genome_experiment_data[genome_id][item_val["cpd_id"]] = {
+                    "growth": item_val["signal"],
+                    "source": item_val["experiment"],
+                    "chebi_id": item_val.get("chebi_id", "")
+                }
+
+        # Collect per-genome phenosim files
+        phenosim_files = []
+        if os.path.isdir(phenosim_directory):
+            phenosim_files = [f for f in os.listdir(phenosim_directory) if f.endswith('.json')]
+        if not phenosim_files:
+            print(f"No phenosim JSON files found in {phenosim_directory}")
+            return
+
+        print(f"Processing {len(phenosim_files)} phenosim files from {phenosim_directory}")
+
+        # Create output directory
+        os.makedirs(phenotypes_dir, exist_ok=True)
+
+        model_performance_rows = []
+        genome_phenotype_rows = []
+        gene_phenotype_rows = []
+
+        for phenosim_file in phenosim_files:
+            genome_id = phenosim_file.replace('.json', '')
+            filepath = os.path.join(phenosim_directory, phenosim_file)
+            try:
+                with open(filepath) as f:
+                    file_data = json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"  Warning: Could not read {phenosim_file}: {e}")
+                continue
+
+            data = file_data.get("data", {})
+            summary = data.get("summary", {})
+            exp_data = genome_experiment_data.get(genome_id, {})
+
+            # ===== TABLE 1: Model Performance row =====
+            positive_growth_count = 0
+            negative_growth_count = 0
+            positive_gaps = []
+            negative_gaps = []
+
+            for cpd_id, cpd_data in data.items():
+                if cpd_id == "summary" or not isinstance(cpd_data, dict):
+                    continue
+                obj_value = cpd_data.get("objective_value", 0) or 0
+                gap_count = cpd_data.get("gapfill_count", 0) or 0
+
+                if obj_value > 0.01:
+                    positive_growth_count += 1
+                    if gap_count > 0:
+                        positive_gaps.append(gap_count)
+                else:
+                    negative_growth_count += 1
+                    if gap_count > 0:
+                        negative_gaps.append(gap_count)
+
+            model_performance_rows.append({
+                "genome_id": genome_id,
+                "taxonomy": "",
+                "false_positives": summary.get("FP", 0) or 0,
+                "false_negatives": summary.get("FN", 0) or 0,
+                "true_positives": summary.get("CP", 0) or 0,
+                "true_negatives": summary.get("CN", 0) or 0,
+                "positive_growth": positive_growth_count,
+                "negative_growth": negative_growth_count,
+                "avg_positive_growth_gaps": round(sum(positive_gaps) / len(positive_gaps), 4) if positive_gaps else 0,
+                "avg_negative_growth_gaps": round(sum(negative_gaps) / len(negative_gaps), 4) if negative_gaps else 0,
+                "closest_user_genomes": ""
+            })
+
+            # ===== TABLE 2 & 3: Per-phenotype rows =====
+            # Track gene associations per genome for Table 3
+            gene_phenotype_map = {}  # gene_id -> {cpd_id -> {reactions, scores}}
+
+            for cpd_id, cpd_data in data.items():
+                if cpd_id == "summary" or not isinstance(cpd_data, dict):
+                    continue
+
+                obj_value = cpd_data.get("objective_value", 0) or 0
+                pred_class = cpd_data.get("class", "")
+                reactions = cpd_data.get("reactions", [])
+                gfreactions = cpd_data.get("gfreactions", {})
+                gap_count = cpd_data.get("gapfill_count", 0) or 0
+                fluxes = cpd_data.get("fluxes", {})
+
+                # Find closest experimental data for this phenotype
+                closest_exp = ""
+                if cpd_id in exp_data:
+                    exp_info = exp_data[cpd_id]
+                    closest_exp = f"{exp_info['source']}:{'growth' if exp_info['growth'] else 'no_growth'}"
+
+                # Table 2 row
+                genome_phenotype_rows.append({
+                    "genome_id": genome_id,
+                    "phenotype_id": cpd_id,
+                    "phenotype_name": cpd_names.get(cpd_id, cpd_id),
+                    "growth_prediction": "positive" if obj_value > 0.01 else "negative",
+                    "class": pred_class,
+                    "objective_value": round(obj_value, 6),
+                    "gap_count": gap_count,
+                    "gapfilled_reactions": ";".join(gfreactions.keys()) if gfreactions else "",
+                    "reaction_count": cpd_data.get("reaction_count", len(reactions)),
+                    "closest_experimental_data": closest_exp
+                })
+
+                # Table 3: extract gene associations from gapfilled reactions
+                # gfreactions format: {rxn_id: [direction, gene_or_null]}
+                if gfreactions:
+                    for rxn_id, rxn_info in gfreactions.items():
+                        gene_id = rxn_info[1] if isinstance(rxn_info, list) and len(rxn_info) > 1 and rxn_info[1] else None
+                        if gene_id:
+                            if gene_id not in gene_phenotype_map:
+                                gene_phenotype_map[gene_id] = {}
+                            if cpd_id not in gene_phenotype_map[gene_id]:
+                                gene_phenotype_map[gene_id][cpd_id] = {
+                                    "reactions": set(),
+                                    "fluxes": []
+                                }
+                            gene_phenotype_map[gene_id][cpd_id]["reactions"].add(rxn_id)
+                            # Use flux as a fitness proxy if available
+                            if rxn_id in fluxes:
+                                gene_phenotype_map[gene_id][cpd_id]["fluxes"].append(abs(fluxes[rxn_id]))
+
+            # Convert gene map to Table 3 rows
+            for gene_id, phenotype_dict in gene_phenotype_map.items():
+                for cpd_id, gdata in phenotype_dict.items():
+                    scores = gdata["fluxes"]
+                    gene_phenotype_rows.append({
+                        "genome_id": genome_id,
+                        "gene_id": gene_id,
+                        "phenotype_id": cpd_id,
+                        "associated_reactions": ";".join(sorted(gdata["reactions"])),
+                        "max_fitness_score": round(max(scores), 6) if scores else 0,
+                        "min_fitness_score": round(min(scores), 6) if scores else 0,
+                        "avg_fitness_score": round(sum(scores) / len(scores), 6) if scores else 0
+                    })
+
+        # Write TSV files
+        if model_performance_rows:
+            df = pd.DataFrame(model_performance_rows)
+            df.to_csv(os.path.join(phenotypes_dir, "model_performance.tsv"), sep="\t", index=False)
+            print(f"Saved model_performance.tsv with {len(df)} genomes")
+
+        if genome_phenotype_rows:
+            df = pd.DataFrame(genome_phenotype_rows)
+            df.to_csv(os.path.join(phenotypes_dir, "genome_phenotypes.tsv"), sep="\t", index=False)
+            print(f"Saved genome_phenotypes.tsv with {len(df)} records")
+
+        if gene_phenotype_rows:
+            df = pd.DataFrame(gene_phenotype_rows)
+            df.to_csv(os.path.join(phenotypes_dir, "gene_phenotypes.tsv"), sep="\t", index=False)
+            print(f"Saved gene_phenotypes.tsv with {len(df)} records")
+        else:
+            print("No gene-phenotype associations found in phenosim data")
+
+        print(f"Built phenotype tables in {phenotypes_dir}")
+
+    def build_model_tables(self, models_dir):
+        pass
+
     def pipeline_build_sqllite_db(self):
         """
         Pipeline step for building the SQLite database from all output data.
@@ -620,7 +823,7 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
         except Exception as e:
             print(f"Warning: Failed to save KBase report: {e}")
 
-def run_phenotype_simulation(model_filename,output_filename,max_phenotypes=5):
+def run_phenotype_simulation(model_filename,output_filename,max_phenotypes,kbversion):
     """
     Worker function for parallel phenotype simulation.
     This runs in a separate process with its own memory space.
@@ -652,7 +855,7 @@ def run_phenotype_simulation(model_filename,output_filename,max_phenotypes=5):
     class PhenotypeWorkerUtil(MSReconstructionUtils,MSFBAUtils,MSBiochemUtils):
         def __init__(self, kbversion):
             super().__init__(name="PhenotypeWorkerUtil", kbversion=kbversion)
-    pheno_util = PhenotypeWorkerUtil(kbversion=global_kbversion)
+    pheno_util = PhenotypeWorkerUtil(kbversion=kbversion)
 
     # Get template for gapfilling
     template = pheno_util.get_template(pheno_util.templates["gn"], None)
@@ -721,8 +924,8 @@ def run_phenotype_simulation(model_filename,output_filename,max_phenotypes=5):
     return {"success": True, "genome_id": genome_id}
 
 
-def run_model_reconstruction(input_filename, output_filename, classifier_dir):
-    worker_util = MSReconstructionUtils(kbversion=global_kbversion)
+def run_model_reconstruction(input_filename, output_filename, classifier_dir,kbversion):
+    worker_util = MSReconstructionUtils(kbversion=kbversion)
 
     # Clear MSModelUtil cache for this process
     MSModelUtil.mdlutls.clear()
