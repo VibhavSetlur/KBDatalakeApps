@@ -256,6 +256,9 @@ Author: chenry
         if os.path.exists('/data') and os.path.exists('/data/reference_data'):
             print(os.listdir('/data/reference_data'))
 
+            if os.path.exists('//data/reference_data/berdl'):
+                print('berdl:', os.listdir('/data/reference_data/berdl'))
+
         if not skip_annotation:
             test_annotation(self.kb_kofam, self.kb_bakta, self.kb_psortb, self.rast_client)
 
