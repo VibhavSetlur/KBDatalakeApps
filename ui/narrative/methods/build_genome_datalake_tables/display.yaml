@@ -102,6 +102,14 @@ parameters:
         long-hint: |
             x
 
+    export_all_content:
+        ui-name: |
+            Expert entire workdir content
+        short-hint: |
+            THIS IS HUGE
+        long-hint: |
+            THIS IS HUGE
+
 description: |
     <p>This app builds datalake tables from Genome or GenomeSet objects in your
     workspace. The tables can be used for downstream analysis and querying.</p>

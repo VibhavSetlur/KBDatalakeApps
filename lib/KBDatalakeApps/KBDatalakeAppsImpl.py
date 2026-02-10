@@ -236,6 +236,8 @@ Author: chenry
         skip_pangenome = params['skip_pangenome'] == 1
         skip_genome_pipeline = params['skip_genome_pipeline'] == 1
         skip_modeling_pipeline = params['skip_modeling_pipeline'] == 1
+        export_all_data = params['export_all_content'] == 1
+        export_genome_data = params['export_genome_data'] == 1
 
         input_params = Path(self.shared_folder) / 'input_params.json'
         print(str(input_params.resolve()))
@@ -401,15 +403,7 @@ Author: chenry
         #t_end_time = time.perf_counter()
         #print(f"Total Execution time annotation: {t_end_time - t_start_time} seconds")
 
-        # Zip up shared_folder contents and upload to Shock for downloadable report link
-        shared_folder_path = Path(self.shared_folder)
-        self.logger.info(f"Zipping shared folder contents: {shared_folder_path}")
-        archive_shock_info = self.dfu.file_to_shock({
-            'file_path': str(shared_folder_path),
-            'pack': 'zip'
-        })
-        archive_shock_id = archive_shock_info['shock_id']
-        self.logger.info(f"Uploaded shared folder archive to Shock: {archive_shock_id}")
+
 
         # Create KBaseFBA.GenomeDataLakeTables
 
@@ -440,6 +434,36 @@ Author: chenry
 
         executor.shutdown()
         print_path(Path(self.shared_folder).resolve())
+
+        # Safe to read and export data
+        file_links = []
+        # Zip up shared_folder contents and upload to Shock for downloadable report link
+        if export_all_data:
+            shared_folder_path = Path(self.shared_folder)
+            self.logger.info(f"Zipping shared folder contents: {shared_folder_path}")
+            archive_shock_info = self.dfu.file_to_shock({
+                'file_path': str(shared_folder_path),
+                'pack': 'zip'
+            })
+            archive_shock_id = archive_shock_info['shock_id']
+            self.logger.info(f"Uploaded shared folder archive to Shock: {archive_shock_id}")
+            file_links.append({
+                'shock_id': archive_shock_id,
+                'name': 'pipeline_output.zip',
+                'label': 'Pipeline Output',
+                'description': 'Zipped archive of all pipeline output files'
+            })
+        if export_genome_data:
+            archive_shock_id = self.dfu.file_to_shock({
+                'file_path': str(self.shared_folder) + '/genome',
+                'pack': 'zip'
+            })['shock_id']
+            file_links.append({
+                'shock_id': archive_shock_id,
+                'name': 'input_genomes.zip',
+                'label': 'Input Genomes Data',
+                'description': 'Input Genomes with annotation and model files'
+            })
 
         #saved_object_info = self.kbase_api.save_object('fake_output',
         #                           params['workspace_name'],
@@ -474,34 +498,11 @@ Author: chenry
         self.logger.info(f"HTML directory contents: {os.listdir(output_directory)}")
         self.logger.info(f"Shock ID: {shock_id}")
 
-
-
-
-        html_links = []
-        html_report = {
+        html_links = [{
             'shock_id': shock_id,
             'name': 'index.html',
             'label': 'BERDL Tables',
             'description': 'BERDL Table Viewer'
-        }
-        html_links.append(html_report)
-
-        shock_id_data_genome = self.dfu.file_to_shock({
-            'file_path': self.shared_folder + '/genome',
-            'pack': 'zip'
-        })['shock_id']
-        html_links.append({
-            'shock_id': shock_id_data_genome,
-            'name': 'input_genomes.zip',
-            'label': 'Input Genomes Data',
-            'description': 'Input Genomes with annotation and model files'
-        })
-
-        file_links = [{
-            'shock_id': archive_shock_id,
-            'name': 'pipeline_output.zip',
-            'label': 'Pipeline Output',
-            'description': 'Zipped archive of all pipeline output files'
         }]
 
         report_params = {
@@ -509,7 +510,7 @@ Author: chenry
             'warnings': ['example warning'],
             'workspace_name': params['workspace_name'],
             'objects_created': [],
-            'html_links': [html_report],
+            'html_links': html_links,
             'direct_html_link_index': 0,
             'file_links': file_links,
             # 'html_window_height': int(params['report_height']),
