@@ -130,8 +130,7 @@ def run_psortb(client, org_flag, genome_file_input, output_file):
         for feature_id, d in annotation.items():
             pri_loc = d.get('Final_Localization', '')
             sec_loc = d.get('Secondary_Localization', '')
-            fh.write(f'{feature_id}\t{pri_loc}\tsec_loc\n')
-    pass
+            fh.write(f'{feature_id}\t{pri_loc}\t{sec_loc}\n')
 
 
 def run_bakta(client, genome_file_input, output_file):
@@ -143,8 +142,8 @@ def run_bakta(client, genome_file_input, output_file):
     annotation = parse_bakta(result)
     print('write: ', str(output_file))
     keys = set()
-    for v in annotation.values():
-        keys |= v
+    for ontology_set in annotation.values():
+        keys |= set(ontology_set)
     keys = sorted(keys)
     with open(str(output_file), 'w') as fh:
         header = "\t".join(keys)

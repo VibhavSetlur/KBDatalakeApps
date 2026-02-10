@@ -36,7 +36,7 @@ def task_psortb(filename_faa: Path, org_arg, client):
         _parent = filename_faa.parent
         output_annotation = _parent / f'{filename_faa.name[:-4]}_annotation_psortb.tsv'
         # run task
-        out = run_psortb(client, filename_faa, org_arg, output_annotation)
+        out = run_psortb(client, org_arg, filename_faa, output_annotation)
 
         print(f'done task_psortb: {output_annotation}')
         print(out)
