@@ -18,7 +18,7 @@ import cobra
 from modelseedpy.core.msgenome import MSGenome, MSFeature
 from modelseedpy import AnnotationOntology, MSPackageManager, MSMedia, MSModelUtil, MSBuilder, MSATPCorrection, MSGapfill, MSGrowthPhenotype, MSGrowthPhenotypes, ModelSEEDBiochem, MSExpression
 from modelseedpy.core.mstemplate import MSTemplateBuilder
-#from berdl import OntologyEnrichment
+from KBDatalakeApps.ontology_enrichment import OntologyEnrichment
 
 # BERDL query modules (Jose P. Faria)
 """
@@ -251,7 +251,7 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
 
         # Get token from environment or app parameters
         # FIXME: wrong token this is KBase auth token not for BERDL. (Please check if this works)
-        token = os.environ.get('KBASE_AUTH_TOKEN') or self.app_parameters.get('token', '')
+        token = self.get_token(namespace="berdl")
         if not token:
             print("Warning: No BERDL token available, skipping ontology enrichment")
             return
@@ -489,21 +489,51 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
                 print(f"  Warning: Could not read {phenosim_file}: {e}")
                 continue
 
+            details = file_data.get("details", {})
             data = file_data.get("data", {})
             summary = data.get("summary", {})
             exp_data = genome_experiment_data.get(genome_id, {})
 
             # ===== TABLE 1: Model Performance row =====
+            # Recompute accuracy by comparing zero-gapfill predictions vs experimental data
             positive_growth_count = 0
             negative_growth_count = 0
             positive_gaps = []
             negative_gaps = []
+            cp = 0  # correct positive: exp=growth, model=growth (no gapfill)
+            cn = 0  # correct negative: exp=no_growth, model=no_growth
+            fp = 0  # false positive: exp=no_growth, model=growth (no gapfill)
+            fn = 0  # false negative: exp=growth, model=no_growth
+
+            for cpd_id,index in enumerate(details["Phenotype"]):
+                if cpd_id not in exp_data:
+                    continue
+                if details["Class"][index] == "P":
+                    positive_growth_count += 1
+                    if cpd_id in exp_data:
+                        if bool(exp_data[cpd_id]["growth"]):
+                            cp += 1
+                        else:
+                            fp += 1
+                else:
+                    negative_growth_count += 1
+                    if cpd_id in exp_data:
+                        if bool(exp_data[cpd_id]["growth"]):
+                            fn += 1
+                        else:
+                            cn += 1
+
+
+
 
             for cpd_id, cpd_data in data.items():
                 if cpd_id == "summary" or not isinstance(cpd_data, dict):
                     continue
                 obj_value = cpd_data.get("objective_value", 0) or 0
                 gap_count = cpd_data.get("gapfill_count", 0) or 0
+
+                # Model predicts growth only if objective > threshold AND no gapfilling needed
+                model_grows = obj_value > 0.01 and gap_count == 0
 
                 if obj_value > 0.01:
                     positive_growth_count += 1
@@ -514,13 +544,29 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
                     if gap_count > 0:
                         negative_gaps.append(gap_count)
 
+                # Compare against experimental data if available
+                if cpd_id in exp_data:
+                    exp_grows = bool(exp_data[cpd_id]["growth"])
+                    if exp_grows and model_grows:
+                        cp += 1
+                    elif exp_grows and not model_grows:
+                        fn += 1
+                    elif not exp_grows and model_grows:
+                        fp += 1
+                    else:
+                        cn += 1
+
+            total_compared = cp + cn + fp + fn
+            accuracy = round((cp + cn) / total_compared, 4) if total_compared > 0 else 0
+
             model_performance_rows.append({
                 "genome_id": genome_id,
                 "taxonomy": "",
-                "false_positives": summary.get("FP", 0) or 0,
-                "false_negatives": summary.get("FN", 0) or 0,
-                "true_positives": summary.get("CP", 0) or 0,
-                "true_negatives": summary.get("CN", 0) or 0,
+                "false_positives": fp,
+                "false_negatives": fn,
+                "true_positives": cp,
+                "true_negatives": cn,
+                "accuracy": accuracy,
                 "positive_growth": positive_growth_count,
                 "negative_growth": negative_growth_count,
                 "avg_positive_growth_gaps": round(sum(positive_gaps) / len(positive_gaps), 4) if positive_gaps else 0,
