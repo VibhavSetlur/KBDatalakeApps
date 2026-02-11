@@ -2,7 +2,7 @@ from pathlib import Path
 import polars as pl
 from berdl.query.query_ontology import QueryOntologyABC
 from berdl.hash_seq import ProteinSequence
-from modelseedpy.core.msgenome import MSFeature
+from modelseedpy.core.msgenome import MSFeature, MSGenome
 
 
 def collect_ontology(_doc):
@@ -52,6 +52,91 @@ class QueryOntologyLocal(QueryOntologyABC):
             'bakta': annotation_bakta,
             'kofam': annotation_kofam,
         }
+
+    def get_annotation_bakta(self, hash_collection):
+        res = self.ldf_annotation_bakta.filter(pl.col("_id").is_in(set(hash_collection))).collect()
+        res = {row['_id']: row for row in res.rows(named=True)}
+
+        return res
+
+    def get_annotation_kofam(self, hash_collection):
+        res = self.ldf_annotation_kofam.filter(pl.col("_id").is_in(set(hash_collection))).collect()
+        res = {row['_id']: row for row in res.rows(named=True)}
+
+        return res
+
+    @staticmethod
+    def clean_bakta_value(ont, value):
+        if ont == 'KEGG' and value.startswith('KEGG:'):
+            return value[5:]
+        if ont == 'COG' and value.startswith('COG:'):
+            return value[4:]
+        if ont in {'uniref_90', 'uniref_100', 'uniref_50'} and value.startswith('UniRef:'):
+            return value[7:]
+        return value
+
+    def get_annotations(self, genome: MSGenome):
+        ret = {}
+        h_to_feature_id = {}
+        feature_id_to_h = {}
+        for f in genome.features:
+            if f.seq:
+                protein = ProteinSequence(f.seq)
+                h = protein.hash_value
+                if h not in h_to_feature_id:
+                    h_to_feature_id[h] = set()
+                h_to_feature_id[h].add(f.id)
+                feature_id_to_h[f.id] = h
+
+        h_to_kofam = self.get_annotation_kofam(h_to_feature_id)
+
+        data = {
+            'feature_id': [],
+            'KEGG': [],
+        }
+        for f in genome.features:
+            if f.seq:
+                h = feature_id_to_h[f.id]
+                _annotation = h_to_kofam.get(h)
+                if _annotation:
+                    kos = _annotation.get('kos', [])
+                    if kos and len(kos) > 0:
+                        data['feature_id'].append(f.id)
+                        data['KEGG'].append('; '.join(kos))
+        ret['kofam'] = pl.DataFrame(data)
+
+        h_to_batka = self.get_annotation_bakta(h_to_feature_id)
+
+        data = {
+            'feature_id': [],
+        }
+
+        def list_tuple_to_dict(list_tuple, ontology_filster: set):
+            _res = {_v: [] for _v in ontology_filster}
+            for ont, value in list_tuple:
+                _res[ont].append(self.clean_bakta_value(ont, value))
+            return _res
+        bakta_ontology_set = set()
+        for doc in h_to_batka.values():
+            o = collect_ontology(doc)
+            bakta_ontology_set |= {t[0] for t in o}
+        for v in bakta_ontology_set:
+            data[v] = []
+
+        for f in genome.features:
+            if f.seq:
+                h = feature_id_to_h[f.id]
+                doc = h_to_batka.get(h)
+                if doc:
+                    o = collect_ontology(doc)
+                    dict_list = list_tuple_to_dict(o, bakta_ontology_set)
+                    data['feature_id'].append(f.id)
+                    for k, l in dict_list.items():
+                        data[k].append('; '.join(l) if len(l) > 0 else None)
+        ret['bakta'] = pl.DataFrame(data)
+
+        return ret
+
 
     def get_protein_ontology_bulk(self, features_or_seqs: list):
         _all_h = set()
