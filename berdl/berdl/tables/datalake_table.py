@@ -35,7 +35,11 @@ class DatalakeTableBuilder:
         self.build_ani_table()
         df_user_features = self.build_user_genome_feature_parquet()
         self.build_user_genome_features_table(df_user_features)
-        df_pangenome_features = self.build_pangenome_member_feature_parquet()
+
+        path_genome_dir = self.root_pangenome.genome_dir
+        if path_genome_dir.exists():
+            df_pangenome_features = self.build_pangenome_member_feature_parquet()
+            self.build_pangenome_genome_features_table(df_pangenome_features)
 
         #self.build_user_genome_features_table()
         #self.build_pangenome_genome_features_table()
