@@ -146,7 +146,7 @@ Author: chenry
             )
         
     @staticmethod
-    def run_pangenome_pipeline(filename_faa):
+    def run_annotation_pipeline(filename_faa):
         cmd = ["/kb/module/scripts/run_annotation.sh", str(filename_faa)]
 
         env = os.environ.copy()
@@ -368,7 +368,8 @@ Author: chenry
                             tasks_pangeome.append(executor.run_task(task_rast,
                                                                     path_pangenome_members / _f,
                                                                     self.rast_client))
-                            #tasks_pangeome.append(executor.run_task())
+                            tasks_pangeome.append(executor.run_task(self.run_annotation_pipeline,
+                                                                    path_pangenome_members / _f))
 
 
 
