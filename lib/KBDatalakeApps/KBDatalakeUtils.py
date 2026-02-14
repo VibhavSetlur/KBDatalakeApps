@@ -272,7 +272,7 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
         essential_gene_ids = None
         if essential_genes_file and os.path.exists(essential_genes_file):
             ess_df = pd.read_csv(essential_genes_file)
-            essential_gene_ids = set(ess_df['gene_id'])
+            essential_gene_ids = set(ess_df['locusId'].astype(str))
             print(f"Loaded {len(essential_gene_ids)} essential gene IDs from {essential_genes_file}")
 
         # Collect phenosim files from user directory and reference directory
@@ -1540,7 +1540,7 @@ def run_model_reconstruction(input_filename, output_filename, classifier_dir,kbv
 
     # Get minimal and rich media for analysis
     minimal_media = gapfill_media  # Use the gapfill media as minimal
-    rich_media = worker_util.get_media("KBaseMedia/Complete")
+    rich_media = worker_util.get_media("KBaseMedia/AuxoMedia")
 
     # Collect gapfilled reactions by category
     core_gf_rxns = []
