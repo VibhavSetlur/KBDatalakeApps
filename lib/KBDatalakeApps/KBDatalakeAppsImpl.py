@@ -144,7 +144,7 @@ Author: chenry
             raise RuntimeError(
                 f"pangenome pipeline failed with exit code {ret}"
             )
-        
+
     @staticmethod
     def run_annotation_pipeline(filename_faa):
         cmd = ["/kb/module/scripts/run_annotation.sh", str(filename_faa)]
@@ -351,26 +351,27 @@ Author: chenry
         executor = TaskExecutor(max_workers=4)
         path_user_genome = Path(self.shared_folder) / "genome"
         path_user_genome.mkdir(parents=True, exist_ok=True)
-        tasks = []
+        tasks_input_genome = []
+        tasks_input_genome_rast = []
         for filename_faa in os.listdir(str(path_user_genome)):
             if filename_faa.endswith('.faa'):
                 print('found', filename_faa)
                 if skip_annotation:
                     print('skip_annotation')
                 else:
-                    tasks.append(executor.run_task(task_rast,
-                                                   path_user_genome / filename_faa,
-                                                   self.rast_client))
-                    tasks.append(executor.run_task(task_kofam,
-                                                   path_user_genome / filename_faa,
-                                                   self.kb_kofam))
-                    tasks.append(executor.run_task(task_bakta,
-                                                   path_user_genome / filename_faa,
-                                                   self.kb_bakta))
-                    tasks.append(executor.run_task(task_psortb,
-                                                   path_user_genome / filename_faa,
-                                                   '-n',  # FIXME: predict template class first to select proper flag
-                                                   self.kb_psortb))
+                    th = executor.run_task(task_rast, path_user_genome / filename_faa, self.rast_client)
+                    tasks_input_genome_rast.append(th)
+                    tasks_input_genome.append(th)
+                    tasks_input_genome.append(executor.run_task(task_kofam,
+                                                                path_user_genome / filename_faa,
+                                                                self.kb_kofam))
+                    tasks_input_genome.append(executor.run_task(task_bakta,
+                                                                path_user_genome / filename_faa,
+                                                                self.kb_bakta))
+                    tasks_input_genome.append(executor.run_task(task_psortb,
+                                                                path_user_genome / filename_faa,
+                                                                '-n',  # FIXME: predict template class first to select proper flag
+                                                                self.kb_psortb))
 
         path_pangenome = Path(self.shared_folder) / "pangenome"
         path_pangenome.mkdir(parents=True, exist_ok=True)
@@ -426,14 +427,10 @@ Author: chenry
                         print(f'nope {ex}')
                     """
 
-        print('Task barrier input genome annotation')
-        for t in tasks:
+        print('Task barrier input genome annotation RAST')
+        for t in tasks_input_genome_rast:
             print(f'await for {t.args} {t.status}')
             t.wait()
-        for t in tasks:
-            print(t.status)
-            print(t.result)
-            print(t.traceback)
 
         if not skip_modeling_pipeline:
             model_params = {
@@ -451,11 +448,6 @@ Author: chenry
             self.run_model_pipeline(str(model_params_file))
         else:
             print('skip modeling pipeline')
-
-        #t_end_time = time.perf_counter()
-        #print(f"Total Execution time annotation: {t_end_time - t_start_time} seconds")
-
-
 
         # Create KBaseFBA.GenomeDataLakeTables
 
@@ -475,6 +467,15 @@ Author: chenry
         }
 
         # Done with all tasks
+        print('Task barrier input genome annotation')
+        for t in tasks_input_genome:
+            print(f'await for {t.args} {t.status}')
+            t.wait()
+        for t in tasks_input_genome:
+            print(t.status)
+            print(t.result)
+            print(t.traceback)
+
         print('Task barrier')
         for t in tasks_pangeome:
             print(f'await for {t.args} {t.status}')
