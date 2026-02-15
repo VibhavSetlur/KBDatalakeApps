@@ -110,6 +110,22 @@ parameters:
         long-hint: |
             x
 
+    export_folder_models:
+        ui-name: |
+            Export Models Folder
+        short-hint: |
+            Export entire folder
+        long-hint: |
+            x
+
+    export_folder_phenotypes:
+        ui-name: |
+            Export Phenotypes Folder
+        short-hint: |
+            Export entire folder
+        long-hint: |
+            x
+
     export_all_content:
         ui-name: |
             Expert entire workdir content

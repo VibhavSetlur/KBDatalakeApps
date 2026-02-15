@@ -139,6 +139,30 @@
                 "checked_value": 1,
                 "unchecked_value": 0
             }
+        },
+        {
+            "id": "export_folder_phenotypes",
+            "optional": false,
+            "advanced": true,
+            "allow_multiple": false,
+            "default_values": ["0"],
+            "field_type": "checkbox",
+            "checkbox_options": {
+                "checked_value": 1,
+                "unchecked_value": 0
+            }
+        },
+        {
+            "id": "export_folder_models",
+            "optional": false,
+            "advanced": true,
+            "allow_multiple": false,
+            "default_values": ["0"],
+            "field_type": "checkbox",
+            "checkbox_options": {
+                "checked_value": 1,
+                "unchecked_value": 0
+            }
         }
     ],
     "behavior": {
@@ -203,6 +227,16 @@
                 {
                     "input_parameter": "export_databases",
                     "target_property": "export_databases",
+                    "target_type_transform": "int"
+                },
+                {
+                    "input_parameter": "export_folder_models",
+                    "target_property": "export_folder_models",
+                    "target_type_transform": "int"
+                },
+                {
+                    "input_parameter": "export_folder_phenotypes",
+                    "target_property": "export_folder_phenotypes",
                     "target_type_transform": "int"
                 }
             ],

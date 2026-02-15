@@ -25,7 +25,9 @@ def convert_kbase_location(feature_location):
 class DatalakeTableBuilder:
 
     def __init__(self, root_genome: GenomePaths, root_pangenome: PathsPangenome,
+                 input_genomes: list,
                  include_dna_sequence=True, include_protein_sequence=True):
+        self.input_genomes = set(input_genomes)
         self.root_genome = root_genome
         self.root_pangenome = root_pangenome
         self.include_dna_sequence = include_dna_sequence
@@ -140,7 +142,7 @@ class DatalakeTableBuilder:
                         (f'user_{genome_user}', genome_ani, ani, af1, af2)
                     )
 
-        if self.root_genome.ani_phenotypes_json:
+        if self.root_genome.ani_phenotypes_json.exists():
             with open(self.root_genome.ani_phenotypes_json) as fh:
                 data_ani_phenotypes = json.load(fh)
             for genome_user, ani_matches in data_ani_phenotypes.items():
@@ -259,80 +261,84 @@ class DatalakeTableBuilder:
 
         genome_id_to_ontologies = {}
         all_ontology_terms = set()
+        faa_to_process = set()
         for f in os.listdir(str(input_genome_dir)):
             if f.endswith('.faa'):
                 path_genome_faa = input_genome_dir / f
-                genome_id = path_genome_faa.name[5:-4]  # strip user_<genome_id>.faa
-                path_genome_tsv = input_genome_dir / f'{genome_id}_genome.tsv'
-                if path_genome_tsv.exists():
-                    print('build_user_genome_features_table - found', genome_id)
-                    feature_ontology_terms = self.collect_annotation(genome_id, input_genome_dir)
-                    for o in feature_ontology_terms.values():
-                        all_ontology_terms |= set(o)
-                    genome_id_to_ontologies[genome_id] = feature_ontology_terms
+                genome_id = path_genome_faa.name[:-4]  # strip .faa
+                if genome_id in self.input_genomes:
+                    path_genome_tsv = input_genome_dir / f'{genome_id}_genome.tsv'
+                    if path_genome_tsv.exists():
+                        print('build_user_genome_features_table - found', genome_id)
+                        feature_ontology_terms = self.collect_annotation(genome_id, input_genome_dir)
+                        for o in feature_ontology_terms.values():
+                            all_ontology_terms |= set(o)
+                        genome_id_to_ontologies[genome_id] = feature_ontology_terms
+
+                    faa_to_process.add(path_genome_faa)
+                else:
+                    print(f'skip {genome_id}. Does not belong to this pangenome')
 
         print(f'found these ontology terms: {all_ontology_terms}')
         for term in all_ontology_terms:
             data[f'ontology_{term}'] = []
 
-        for f in os.listdir(str(input_genome_dir)):
-            if f.endswith('.faa'):
-                path_genome_faa = input_genome_dir / f
-                genome_id = path_genome_faa.name[5:-4]  # strip user_<genome_id>.faa
-                path_genome_tsv = input_genome_dir / f'{genome_id}_genome.tsv'
-                path_genome_pangenome_profile = input_genome_dir / f'user_{genome_id}_pangenome_profile.tsv'
-                if path_genome_tsv.exists():
-                    d_pangenome_profile = {}
-                    if path_genome_pangenome_profile.exists():
-                        d_pangenome_profile = {row['feature_id']: row for row in
-                                               pl.read_csv(path_genome_pangenome_profile, separator='\t').rows(
-                                                   named=True)}
+        for path_genome_faa in faa_to_process:
+            genome_id = path_genome_faa.name[:-4]  # strip user_<genome_id>.faa
+            path_genome_tsv = input_genome_dir / f'{genome_id}_genome.tsv'
+            path_genome_pangenome_profile = input_genome_dir / f'user_{genome_id}_pangenome_profile.tsv'
+            if path_genome_tsv.exists():
+                d_pangenome_profile = {}
+                if path_genome_pangenome_profile.exists():
+                    d_pangenome_profile = {row['feature_id']: row for row in
+                                           pl.read_csv(path_genome_pangenome_profile, separator='\t').rows(
+                                               named=True)}
 
-                    df_genome_tsv = pl.read_csv(path_genome_tsv, separator='\t')
-                    feature_ontology_terms = genome_id_to_ontologies[genome_id]
-                    for row in df_genome_tsv.rows(named=True):
-                        # contig, p0, strand, sz
-                        feature_id = row['gene_id']
-                        contig = row['contig']
-                        df_start = int(row['start'])
-                        df_end = row['end']
-                        strand = row['strand']
-                        start = df_start
-                        end = df_end
-                        if strand == '-':
-                            start = df_end
-                            end = df_start
-                        aliases = row['aliases']
-                        feature_len = end - start
-                        feature_type = row['type']
-                        dna_sequence = row['dna_sequence'] if self.include_dna_sequence else None
-                        protein_sequence = row['protein_translation'] if self.include_protein_sequence else None
-                        protein_hash = ProteinSequence(row['protein_translation']).hash_value \
-                            if row.get("protein_translation", "") else None
+                df_genome_tsv = pl.read_csv(path_genome_tsv, separator='\t')
+                feature_ontology_terms = genome_id_to_ontologies[genome_id]
+                for row in df_genome_tsv.rows(named=True):
+                    # contig, p0, strand, sz
+                    feature_id = row['gene_id']
+                    contig = row['contig']
+                    df_start = int(row['start'])
+                    df_end = row['end']
+                    strand = row['strand']
+                    start = df_start
+                    end = df_end
+                    if strand == '-':
+                        start = df_end
+                        end = df_start
+                    aliases = row['aliases']
+                    feature_len = end - start
+                    feature_type = row['type']
+                    dna_sequence = row['dna_sequence'] if self.include_dna_sequence else None
+                    protein_sequence = row['protein_translation'] if self.include_protein_sequence else None
+                    protein_hash = ProteinSequence(row['protein_translation']).hash_value \
+                        if row.get("protein_translation", "") else None
 
-                        data['genome'].append(genome_id)
-                        data['contig'].append(contig)
-                        data['feature_id'].append(feature_id)
-                        data['aliases'].append(aliases)
-                        data['length'].append(feature_len)
-                        data['start'].append(start)
-                        data['end'].append(end)
-                        data['strand'].append(strand)
-                        data['type'].append(feature_type)
-                        data['dna_sequence'].append(dna_sequence)
-                        data['protein_sequence'].append(protein_sequence)
-                        data['protein_sequence_hash'].append(protein_hash)
-                        data['pangenome_cluster'].append(
-                            d_pangenome_profile.get(feature_id, {}).get('pangenome_cluster'))
-                        data['pangenome_is_core'].append(
-                            d_pangenome_profile.get(feature_id, {}).get('is_core')
-                        )
-                        for term in all_ontology_terms:
-                            values = feature_ontology_terms.get(feature_id, {}).get(term)
-                            if values is None:
-                                data[f'ontology_{term}'].append(None)
-                            else:
-                                data[f'ontology_{term}'].append('; '.join(values))
+                    data['genome'].append(genome_id)
+                    data['contig'].append(contig)
+                    data['feature_id'].append(feature_id)
+                    data['aliases'].append(aliases)
+                    data['length'].append(feature_len)
+                    data['start'].append(start)
+                    data['end'].append(end)
+                    data['strand'].append(strand)
+                    data['type'].append(feature_type)
+                    data['dna_sequence'].append(dna_sequence)
+                    data['protein_sequence'].append(protein_sequence)
+                    data['protein_sequence_hash'].append(protein_hash)
+                    data['pangenome_cluster'].append(
+                        d_pangenome_profile.get(feature_id, {}).get('pangenome_cluster'))
+                    data['pangenome_is_core'].append(
+                        d_pangenome_profile.get(feature_id, {}).get('is_core')
+                    )
+                    for term in all_ontology_terms:
+                        values = feature_ontology_terms.get(feature_id, {}).get(term)
+                        if values is None:
+                            data[f'ontology_{term}'].append(None)
+                        else:
+                            data[f'ontology_{term}'].append('; '.join(values))
         return pl.DataFrame(data)
 
     def build_user_genome_features_table(self, df_user_features):
@@ -392,6 +398,37 @@ class DatalakeTableBuilder:
         cur.execute(sql_create_table)
 
         df.to_pandas().to_sql("pangenome_feature", conn, if_exists="append", index=False)
+
+        conn.commit()
+        conn.close()
+
+    def build_input_genome_reactions(self, filename_genome_reactions):
+        conn = sqlite3.connect(str(self.root_pangenome.out_sqlite3_file))
+        cur = conn.cursor()
+        cur.execute("DROP TABLE IF EXISTS genome_reaction;")
+        sql_create_table = """
+        CREATE TABLE IF NOT EXISTS genome_reaction (
+          genome_id            TEXT,
+          reaction_id          TEXT,
+          genes                TEXT,
+          equation_names       TEXT,
+          equation_ids         TEXT,
+          directionality       TEXT,
+          upper_bound          REAL,
+          lower_bound          REAL,
+          gapfilling_status    TEXT,
+          rich_media_flux      REAL,
+          rich_media_class     TEXT,
+          minimal_media_flux   REAL,
+          minimal_media_class  TEXT,
+          PRIMARY KEY (genome_id, reaction_id)
+        );
+        """
+
+        pd.read_csv(filename_genome_reactions, sep='\t').to_sql("genome_reaction",
+                                                                conn,
+                                                                if_exists="append",
+                                                                index=False)
 
         conn.commit()
         conn.close()

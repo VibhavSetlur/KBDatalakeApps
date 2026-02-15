@@ -5,7 +5,6 @@ import traceback
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from KBDatalakeApps.KBDatalakeUtils import KBDataLakeUtils, run_model_reconstruction, run_phenotype_simulation
-from KBDatalakeApps.build_berdl_db import build_berdl_database
 
 
 def main(params):

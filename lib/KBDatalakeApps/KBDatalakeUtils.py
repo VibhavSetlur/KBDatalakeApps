@@ -771,8 +771,7 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
         conn.close()
         print(f"Model data added to genome table for {updated_count} genomes in {database_path}")
 
-
-    def build_model_tables(self, database_path=None, model_path=None, phenoset_file=None):
+    def build_model_tables(self, database_path=None, model_path=None, phenoset_file=None, data_files: list = None):
         """
         Create genome_reactions table and update feature tables with reaction data.
 
@@ -785,17 +784,18 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
                            to the same directory as model_path instead.
             model_path: Path to a *_data.json file or directory containing them.
                         If None, uses self.directory + "/models/"
+            data_files: List of data files to process overrides model_path
         """
-        if model_path is None:
-            model_path = os.path.join(self.directory, "models")
+        if data_files is None:
+            if model_path is None:
+                model_path = os.path.join(self.directory, "models")
 
-        # Collect model data files
-        data_files = []
-        if os.path.isdir(model_path):
-            data_files = [os.path.join(model_path, f)
-                          for f in os.listdir(model_path) if f.endswith('_data.json')]
-        elif os.path.isfile(model_path):
-            data_files = [model_path]
+            # Collect model data files otherwise use the data files provided
+            if os.path.isdir(model_path):
+                data_files = [os.path.join(model_path, f)
+                              for f in os.listdir(model_path) if f.endswith('_data.json')]
+            elif os.path.isfile(model_path):
+                data_files = [model_path]
 
         if not data_files:
             print(f"No model data files found at {model_path}")

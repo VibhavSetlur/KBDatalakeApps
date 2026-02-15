@@ -18,20 +18,10 @@ def main(input_params):
     #kbase = KBaseAPI(input_params['_ctx']['token'], config={
     #    'workspace-url': input_params['_config']['workspace-url']})
 
-    #  extract genomes
+    # extract genomes
     genomes = []
-    for ref in input_params['input_refs']:
-        kbase_input_object = kbase.get_from_ws(ref)
-        kbase_input_object_type = kbase_input_object.info.type
-
-        print('input_object is:', kbase_input_object_type)
-        if kbase_input_object_type == 'KBaseGenomes.Genome':
-            genomes.append(kbase.get_from_ws(str(ref)))
-        elif kbase_input_object_type == 'wololo2':
-            pass
-        else:
-            pass
-            # raise ValueError('')
+    for genome_ref in input_params['_genome_refs']:
+        genomes.append(kbase.get_from_ws(str(genome_ref)))
 
     paths = GenomePaths(root=Path(input_params['_config']['scratch']).resolve())
     berdl_prep_genomes = BERDLPreGenome(kbase, paths)
@@ -75,6 +65,6 @@ if __name__ == "__main__":
         )
 
     with open(filename_input_params, 'r') as fh:
-        input_params = json.load(fh)
+        _input_params = json.load(fh)
 
-    main(input_params)
+    main(_input_params)
