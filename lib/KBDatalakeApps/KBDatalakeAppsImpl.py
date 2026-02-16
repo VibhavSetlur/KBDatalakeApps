@@ -441,7 +441,7 @@ Author: chenry
 
         if not skip_modeling_pipeline:
             model_params = {
-                "input_refs": input_refs,
+                "input_refs": genome_refs,
                 "token": ctx['token'],
                 "scratch": str(self.shared_folder),
                 "kbase_endpoint": self.config.get("kbase-endpoint", ""),

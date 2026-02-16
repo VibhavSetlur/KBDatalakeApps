@@ -86,7 +86,7 @@ def main(params):
     for filename_rast in user_genome_dir.glob('*' + filename_prefix_rast):
         genome_id = filename_rast.name[:-len(filename_prefix_rast)]  # get genome_id
         print(genome_id, filename_rast)
-        all_tsvs.append(str(filename_rast))
+        all_tsvs.append(Path(filename_rast))
         # build MSGenome
     for filename_rast in pangenome_dir.glob('**/*' + filename_prefix_rast):
         genome_id = filename_rast.name[:-len(filename_prefix_rast)]  # get genome_id
