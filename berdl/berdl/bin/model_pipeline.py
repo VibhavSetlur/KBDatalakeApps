@@ -56,6 +56,7 @@ def main(params):
         print(f"  Wrote: {user_genome_tsv}")
 
     # Step 2: Collect RAST-annotated TSVs for model reconstruction
+    """
     _skip_suffixes = ("_kbasedump.tsv", "_bakta.tsv", "_KOfamscan.tsv", "_PSORT.tsv", "_genome_data.tsv")
     all_tsvs = [f for f in sorted(user_genome_dir.glob("user_*.tsv"))
                 if not f.name.endswith(_skip_suffixes)]
@@ -76,20 +77,25 @@ def main(params):
 
     print(f"Total TSVs to process: {len(all_tsvs)}")
     print(all_tsvs)
-
-    # Step 3: Run model reconstruction in parallel
-    results_dir = output_dir / "models"
-    results_dir.mkdir(parents=True, exist_ok=True)
-
+    """
+    all_tsvs = []
+    pangenome_dir = output_dir / "pangenome"
+    genomes_to_process = {}
     filename_prefix_rast = '_rast.tsv'  # RAST annotation prefix
     for filename_rast in user_genome_dir.glob('*' + filename_prefix_rast):
         genome_id = filename_rast.name[:-len(filename_prefix_rast)]  # get genome_id
         print(genome_id, filename_rast)
+        all_tsvs.append(str(filename_rast))
         # build MSGenome
     for filename_rast in pangenome_dir.glob('**/*' + filename_prefix_rast):
         genome_id = filename_rast.name[:-len(filename_prefix_rast)]  # get genome_id
         print(genome_id, filename_rast)
+        all_tsvs.append(str(filename_rast))
         # build MSGenome
+
+    # Step 3: Run model reconstruction in parallel
+    results_dir = output_dir / "models"
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     work_items = []
     for tsv_path in all_tsvs:
