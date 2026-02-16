@@ -1560,7 +1560,7 @@ def run_phenotype_simulation(model_filename,output_filename,data_path,max_phenot
     return {"success": True, "genome_id": genome_id}
 
 
-def run_model_reconstruction2(genome_id: str, genome: MSGenome, output_filename, classifier_dir, kb_version):
+def run_model_reconstruction2(genome_id: str, genome: MSGenome, output_filename, classifier_dir, kb_version, token):
     print('run_model_reconstruction2', genome_id, len(genome.features), output_filename)
 
     # Diagnostic: count features with RAST terms

@@ -24,8 +24,10 @@ class BERDLPangenome:
             print(k, len(g.features))
             for feature in g.features:
                 _parts = feature.description.split(' ')
-                h = _parts[4]
+                h = _parts[5]
                 u_proteins[h] = MSFeature(h, feature.seq)
+
+        print(f'pangenome members # unique proteins: {len(u_proteins)}')
 
         print(f"write master faa")
         genome_master_faa = MSGenome()
@@ -55,6 +57,7 @@ class BERDLPangenome:
             if feature.id not in u_proteins:
                 u_proteins[feature.id] = MSFeature(feature.id, feature.seq)
 
+        print(f'expanded members # unique proteins: {len(u_proteins)}')
         # rebuild master faa genome with proteins from
         #  user / pangenome / fitness / phenotypes
         print(f"write user / pangenome / fitness / phenotypes master faa")
@@ -180,6 +183,8 @@ class BERDLPangenome:
                 genome_features = self.query_g.get_genome_features(member_id)
                 genome_features.to_fasta(filename_faa)
                 members[member_id] = genome_features
+            else:
+                members[member_id] = MSGenome.from_fasta(str(filename_faa))
 
             if not filename_fna.exists():
                 # FIXME: cant fetch from parquet use temp ref data for contigs

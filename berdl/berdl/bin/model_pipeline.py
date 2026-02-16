@@ -131,7 +131,7 @@ def main(params):
     with ProcessPoolExecutor(max_workers=10) as executor:
         for genome_id, (genome, outp) in genomes_to_process.items():
             print(f'submit - run_model_reconstruction {genome_id} {genome} {outp} {classifier_dir} {kbversion}')
-            _future = executor.submit(run_model_reconstruction2, genome_id, genome, str(outp), classifier_dir, kbversion)
+            _future = executor.submit(run_model_reconstruction2, genome_id, genome, str(outp), classifier_dir, kbversion, token)
             futures[_future] = (genome_id, outp)
         for future in as_completed(futures):
             genome_id, outp = futures[future]
