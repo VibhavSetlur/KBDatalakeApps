@@ -315,7 +315,8 @@ Author: chenry
         with open(path_token, 'w') as fh:
             fh.write(ctx['token'])
         self.util = KBDataLakeUtils(kbendpoint=self.config["kbase-endpoint"], reference_path="/data/",
-                                    module_path="/kb/module",token=ctx['token'])
+                                    module_path="/kb/module",token=ctx['token'],
+                                    dfu_client=self.dfu, callback_url=self.callback_url)
         self.util.set_token(get_berdl_token(), namespace="berdl")
 
         skip_annotation = params['skip_annotation'] == 1
@@ -532,6 +533,20 @@ Author: chenry
                                          ])
 
         print_path(path_root.resolve())
+
+        # Save annotated genomes back to workspace from each clade's database
+        for folder_pangenome in os.listdir(str(path_pangenome)):
+            if os.path.isdir(f'{path_pangenome}/{folder_pangenome}'):
+                path_db_file = path_root / 'pangenome' / folder_pangenome / 'db.sqlite'
+                if path_db_file.exists():
+                    print(f'Saving annotated genomes from {folder_pangenome} database')
+                    self.util.save_annotated_genomes(
+                        genome_refs=list(genome_refs.keys()),
+                        suffix=suffix,
+                        output_workspace=workspace_name,
+                        genomeset_name=f"annotated_genomes_{suffix}",
+                        database_filename=str(path_db_file),
+                    )
 
         # Safe to read and export data
         file_links = []

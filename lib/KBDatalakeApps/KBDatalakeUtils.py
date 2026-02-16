@@ -7,6 +7,7 @@ import json
 import uuid
 import shutil
 import hashlib
+import time
 from os import path
 from contextlib import redirect_stdout
 
@@ -33,13 +34,15 @@ except ImportError:
 """
 
 class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
-    def __init__(self,reference_path,module_path,**kwargs):
+    def __init__(self,reference_path,module_path,dfu_client=None,callback_url=None,**kwargs):
         super().__init__(
                 name="KBDataLakeUtils",
                 **kwargs
         )
         self.module_path = module_path
         self.reference_path = reference_path
+        self._dfu_client = dfu_client
+        self._callback_url = callback_url
 
     def run_user_genome_to_tsv(self,genome_ref,output_filename):
         # Load genome object into object_hash
@@ -134,12 +137,179 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
             num_noncoding
         ]
 
-    def pipeline_save_annotated_genomes(self):
+    def save_annotated_genomes(self, genome_refs, suffix, output_workspace, genomeset_name, database_filename):
         """
-        Pipeline step for saving annotated genomes back to KBase.
-        Uses annotation ontology API to save RAST annotations to genome objects.
+        Save annotated genomes back to KBase with ontology events from the SQLite database,
+        then create a GenomeSet referencing all saved genomes.
+
+        For state safety, a fresh KBAnnotationUtils instance is created per genome so that
+        internal state (ftrhash, eventarray, etc.) does not leak between genomes. The
+        dfu_client from KBDatalakeUtils is injected into each instance via set_callback_client.
+
+        Args:
+            genome_refs: list of genome workspace references
+            suffix: suffix to append to genome names (delimited by '_')
+            output_workspace: workspace to save output objects
+            genomeset_name: name for the output GenomeSet
+            database_filename: path to SQLite database containing user_feature table
+
+        Returns:
+            dict with 'genome_refs' (list of saved genome refs) and 'genomeset_ref'
         """
-        pass
+        # Mapping from SQLite ontology column names to ontology event metadata
+        # column_name -> (event_id, method)
+        ontology_column_map = {
+            "ontology_RAST": ("RAST", "RAST"),
+            "ontology_KEGG": ("KO", "kb_kofamscan"),
+            "ontology_EC": ("EC", "kb_bakta"),
+            "ontology_GO": ("GO", "kb_bakta"),
+            "ontology_COG": ("COG", "kb_bakta"),
+            "ontology_PFAM": ("PFAM", "kb_bakta"),
+            "ontology_uniref_50": ("uniref50", "kb_bakta"),
+            "ontology_uniref_90": ("uniref90", "kb_bakta"),
+            "ontology_uniref_100": ("uniref100", "kb_bakta"),
+            "ontology_primary_localization_psortb": ("PSORTB", "kb_psortb"),
+        }
+        method_version = "0.1"
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+
+        # Build provenance referencing the datalake pipeline
+        provenance = [{
+            "description": "Annotations from KBDatalakeApps build_genome_datalake_tables pipeline",
+            "input_ws_objects": list(genome_refs),
+            "method": "build_genome_datalake_tables",
+            "method_params": [{"database_filename": database_filename}],
+            "service": "KBDatalakeApps",
+            "service_ver": "0.0.1",
+        }]
+
+        # Open database and discover which ontology columns exist
+        conn = sqlite3.connect(database_filename)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(user_feature)")
+        db_columns = {row[1] for row in cursor.fetchall()}
+        available_ontology_cols = {
+            col: meta for col, meta in ontology_column_map.items() if col in db_columns
+        }
+
+        saved_genome_refs = []
+        saved_genome_items = []
+
+        for genome_ref in genome_refs:
+            # Get genome name from workspace
+            info = self.get_object_info(genome_ref)
+            genome_name = info[1]
+            output_name = genome_name + "_" + suffix
+
+            # Determine genome ID in the database
+            # DB stores genome as 'user_<name>' or just the genome name
+            # Try both patterns to find matching rows
+            cursor.execute(
+                "SELECT DISTINCT genome FROM user_feature WHERE genome = ? OR genome = ?",
+                (genome_name, "user_" + genome_name)
+            )
+            genome_id_rows = cursor.fetchall()
+            if not genome_id_rows:
+                print(f"Warning: No features found in database for genome {genome_name}, skipping")
+                continue
+            db_genome_id = genome_id_rows[0][0]
+
+            # Query all features for this genome
+            cursor.execute(
+                "SELECT * FROM user_feature WHERE genome = ?",
+                (db_genome_id,)
+            )
+            col_names = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+
+            if not rows:
+                print(f"Warning: No feature rows for genome {db_genome_id}, skipping")
+                continue
+
+            # Build ontology events from database columns
+            events = []
+            for col, (event_id, method) in available_ontology_cols.items():
+                if col not in col_names:
+                    continue
+                col_idx = col_names.index(col)
+
+                # Build ontology_terms: feature_id -> list of term strings
+                ontology_terms = {}
+                for row in rows:
+                    feature_id = row[col_names.index("feature_id")]
+                    value = row[col_idx]
+                    if value and str(value).strip():
+                        terms = [t.strip() for t in str(value).split(";") if t.strip()]
+                        if terms:
+                            ontology_terms[feature_id] = terms
+
+                if not ontology_terms:
+                    continue
+
+                event = {
+                    "id": event_id,
+                    "event_id": method + ":" + method_version + ":" + event_id + ":" + ts,
+                    "method": method,
+                    "method_version": method_version,
+                    "timestamp": ts,
+                    "ontology_terms": ontology_terms,
+                }
+                events.append(event)
+
+            if not events:
+                print(f"Warning: No ontology events to save for genome {genome_name}, skipping")
+                continue
+
+            # Create a fresh KBAnnotationUtils per genome for state safety
+            anno_util = KBAnnotationUtils(
+                kbendpoint=self.workspace_url.replace("/ws", ""),
+                callback_url=self._callback_url,
+                token=self.get_token(namespace="kbase"),
+            )
+            # Inject the pre-built dfu_client from the Impl
+            if self._dfu_client:
+                anno_util.set_callback_client("DataFileUtil", self._dfu_client)
+
+            # Save annotated genome using add_annotation_ontology_events
+            print(f"Saving annotated genome: {output_name} ({len(events)} ontology events)")
+            result = anno_util.add_annotation_ontology_events({
+                "input_ref": genome_ref,
+                "output_workspace": output_workspace,
+                "output_name": output_name,
+                "events": events,
+                "provenance": provenance,
+            })
+
+            output_ref = result.get("output_ref")
+            if output_ref:
+                saved_genome_refs.append(output_ref)
+                saved_genome_items.append({"ref": output_ref, "label": output_name})
+                print(f"  Saved as {output_ref}")
+            else:
+                print(f"  Warning: No output_ref returned for {output_name}")
+
+        conn.close()
+
+        # Save GenomeSet referencing all saved genomes
+        genomeset_ref = None
+        if saved_genome_items:
+            genomeset_data = {
+                "description": f"Annotated genomes from KBDatalakeApps pipeline ({len(saved_genome_items)} genomes)",
+                "items": saved_genome_items,
+            }
+            print(f"Saving GenomeSet: {genomeset_name} ({len(saved_genome_items)} genomes)")
+            save_result = self.save_ws_object(
+                genomeset_name, output_workspace, genomeset_data, "KBaseSets.GenomeSet"
+            )
+            genomeset_ref = self.wsinfo_to_ref(save_result[0])
+            print(f"  GenomeSet saved as {genomeset_ref}")
+        else:
+            print("Warning: No genomes were saved, skipping GenomeSet creation")
+
+        return {
+            "genome_refs": saved_genome_refs,
+            "genomeset_ref": genomeset_ref,
+        }
 
     def build_phenotype_tables(self, output_dir, phenosim_directory,
                                experiment_data_file=None, phenoset_file=None,
