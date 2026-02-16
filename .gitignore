@@ -3,6 +3,7 @@ test/test_env
 jupyterhub_cookie_secret
 jupyterhub.sqlite
 berdl/%SystemDrive%
+@eaDir/
 
 # KBase SDK
 test_local/
