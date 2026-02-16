@@ -444,9 +444,9 @@ Author: chenry
                 "input_refs": input_refs,
                 "token": ctx['token'],
                 "scratch": str(self.shared_folder),
-                "kbase_endpoint": self.config.get("kbase-endpoint", ""),
                 "kbversion": self.util.kb_version,
                 "max_phenotypes": None,
+                "module_path": "/kb/module"
             }
             model_params_file = path_root / 'model_pipeline_params.json'
             with open(str(model_params_file), 'w') as f:
