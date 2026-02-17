@@ -22,6 +22,7 @@ from installed_clients.kb_kofamClient import kb_kofam
 from modelseedpy import MSModelUtil
 from modelseedpy.core.msgenome import MSGenome, MSFeature
 from cobrakbase import KBaseAPI
+from cobrakbase.AbstractHandleClient import AbstractHandle as HandleService
 from installed_clients.baseclient import ServerError
 from annotation.annotation import test_annotation, run_rast, run_kofam
 from executor.task_executor import TaskExecutor
@@ -251,6 +252,7 @@ Author: chenry
         self.kb_kofam = kb_kofam(self.callback_url, service_ver='beta')
         self.rast_client = RAST_SDK(self.callback_url, service_ver='beta')
         self.util = None
+        self.hs = None
         print('polars thread pool', pl.thread_pool_size())
         #END_CONSTRUCTOR
         pass
@@ -289,6 +291,7 @@ Author: chenry
                                     module_path="/kb/module",token=ctx['token'],
                                     dfu_client=self.dfu, callback_url=self.callback_url)
         self.util.set_token(get_berdl_token(), namespace="berdl")
+        self.hs = HandleService(self.config["handle-service-url"], token=ctx['token'])
         skip_save_genome_annotation = params['skip_save_genome_annotation'] == 1
         skip_annotation = params['skip_annotation'] == 1
         skip_pangenome = params['skip_pangenome'] == 1
@@ -596,7 +599,7 @@ Author: chenry
                     shock_id, handle_id = upload_blob_file(str(path_db),
                                                            ctx['token'],
                                                            self.config['shock-url'],
-                                                           self.kbase_api.hs)
+                                                           self.hs)
                     # read members.tsv
                     print(f'upload_blob_file {path_db}: {shock_id} {handle_id}')
                     pangenome_data = {
