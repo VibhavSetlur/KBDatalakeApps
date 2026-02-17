@@ -45,6 +45,18 @@
             }
         },
         {
+            "id" : "output",
+            "optional" : false,
+            "advanced" : false,
+            "allow_multiple" : false,
+            "default_values" : [ "" ],
+            "field_type" : "text",
+            "text_options" : {
+              "valid_ws_types" : [ "KBaseFBA.GenomeDataLakeTables" ],
+              "is_output_name": true
+            }
+        },
+        {
             "id": "skip_annotation",
             "optional": false,
             "advanced": true,
@@ -238,6 +250,10 @@
                     "input_parameter": "export_folder_phenotypes",
                     "target_property": "export_folder_phenotypes",
                     "target_type_transform": "int"
+                },
+                {
+                    "input_parameter": "output",
+                    "target_property": "output"
                 }
             ],
             "output_mapping": [

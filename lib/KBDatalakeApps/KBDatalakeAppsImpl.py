@@ -26,6 +26,7 @@ from annotation.annotation import test_annotation, run_rast, run_kofam
 from executor.task_executor import TaskExecutor
 from executor.task import task_rast, task_kofam, task_psortb, task_bakta
 from KBDatalakeApps.KBDatalakeUtils import KBDataLakeUtils, generate_ontology_tables
+from KBDatalakeApps.utils import upload_blob_file, print_path
 
 # Import KBUtilLib utilities for common functionality
 #from kbutillib import KBWSUtils, KBCallbackUtils, SharedEnvUtils
@@ -34,39 +35,7 @@ from KBDatalakeApps.KBDatalakeUtils import KBDataLakeUtils, generate_ontology_ta
 #    """Custom utility class combining KBUtilLib modules for datalake operations."""
 #    pass
 
-def human_size(size):
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024:
-            return f"{size:.1f}{unit}"
-        size /= 1024
-    return f"{size:.1f}PB"
 
-
-def print_path(root: Path):
-    if not root.exists():
-        print(f"{root} does not exist")
-        return
-
-    print(root.name)
-    _print_tree(root, prefix="")
-
-
-def _print_tree(root: Path, prefix: str):
-    # skip folder mmseqs2_tmp
-    if root.name == 'mmseqs2_tmp':
-        return
-    entries = sorted(root.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-    for i, path in enumerate(entries):
-        is_last = i == len(entries) - 1
-        connector = "└── " if is_last else "├── "
-
-        if path.is_file():
-            size = human_size(path.stat().st_size)
-            print(prefix + connector + f"{path.name} ({size})")
-        else:
-            print(prefix + connector + path.name)
-            extension = "    " if is_last else "│   "
-            _print_tree(path, prefix + extension)
 
 
 def get_berdl_token():
@@ -329,6 +298,7 @@ Author: chenry
         export_folder_models = params['export_folder_models'] == 1
         export_folder_phenotypes = params['export_folder_phenotypes'] == 1
         input_refs = params['input_refs']
+        output_object_name = params['output']
 
         input_params = Path(self.shared_folder) / 'input_params.json'
         print(str(input_params.resolve()))
@@ -466,22 +436,7 @@ Author: chenry
         else:
             print('skip modeling pipeline')
 
-        # Create KBaseFBA.GenomeDataLakeTables
 
-        output_object = {
-            'name': 'no_name',
-            'description': 'fake',
-            'genomeset_ref': '77057/3/1',
-            'pangenome_data': [{
-                'pangenome_id': 'super_fake',
-                'pangenome_taxonomy': 'alien',
-                'user_genomes': [],
-                'datalake_genomes': [],
-                'sqllite_tables_handle_ref': 'KBH_248173'
-                # Chris sqlite KBH_248173
-                # random e. coli? assembly KBH_248118
-            }],
-        }
 
         # Done with all tasks
         print('Task barrier input genome annotation')
@@ -627,14 +582,42 @@ Author: chenry
                             'description': f'{folder_pangenome} clade database'
                         })
 
-        #saved_object_info = self.kbase_api.save_object('fake_output',
-        #                           params['workspace_name'],
-        #                                   'KBaseFBA.GenomeDataLakeTables',
-        #                                   output_object,
-        #                                   meta={}
-        #)
+        pangenome_data_list = []
+        for folder_pangenome in os.listdir(str(path_pangenome)):
+            if os.path.isdir(f'{path_pangenome}/{folder_pangenome}'):
+                path_db = (path_pangenome / folder_pangenome / 'db.sqlite').resolve()
+                if path_db.exists():
+                    shock_id, handle_id = upload_blob_file(str(path_db),
+                                                           ctx['token'],
+                                                           self.config['shock-url'],
+                                                           self.kbase_api.hs)
+                    # read members.tsv
+                    print(f'upload_blob_file {path_db}: {shock_id} {handle_id}')
+                    pangenome_data = {
+                        'pangenome_id': folder_pangenome,
+                        'pangenome_taxonomy': '',
+                        'user_genomes': [],
+                        'datalake_genomes': [],
+                        'sqllite_tables_handle_ref': handle_id
+                    }
+                    pangenome_data_list.append(pangenome_data)
 
-        #print(saved_object_info)
+        # Create KBaseFBA.GenomeDataLakeTables
+
+        output_object = {
+            'name': output_object_name,
+            'description': '',
+            'genomeset_ref': '77057/3/1',
+            'pangenome_data': [pangenome_data_list],
+        }
+        saved_object_info = self.kbase_api.save_object('fake_output',
+                                   params['workspace_name'],
+                                           'KBaseFBA.GenomeDataLakeTables',
+                                           output_object,
+                                           meta={}
+        )
+
+        print(saved_object_info)
 
         # Create report with results
         report_client = KBaseReport(self.callback_url)
