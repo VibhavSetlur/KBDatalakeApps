@@ -626,7 +626,7 @@ Author: chenry
                                                        meta={}
         )
 
-        print(saved_object_info)
+        print("saved object to workspace", saved_object_info)
 
         # Create report with results
         report_client = KBaseReport(self.callback_url)
@@ -637,8 +637,9 @@ Author: chenry
         # Write app-config.json so the DataTables Viewer knows which object to display
         # Use the first input reference as the UPA for the viewer
         app_config = {
-            "upa": "76990/Test2"
+            "upa": str(saved_object_info)
         }
+        print("HTML app_config", app_config)
         app_config_path = os.path.join(output_directory, 'app-config.json')
         with open(app_config_path, 'w') as f:
             json.dump(app_config, f, indent=4)
