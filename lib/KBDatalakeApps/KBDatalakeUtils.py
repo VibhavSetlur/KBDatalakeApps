@@ -34,7 +34,7 @@ except ImportError:
 """
 
 class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
-    def __init__(self,reference_path,module_path,dfu_client=None,callback_url=None,**kwargs):
+    def __init__(self,reference_path,module_path,dfu_client=None,gfu_client=None,callback_url=None,**kwargs):
         super().__init__(
                 name="KBDataLakeUtils",
                 **kwargs
@@ -43,6 +43,7 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
         self.reference_path = reference_path
         self._dfu_client = dfu_client
         self._callback_url = callback_url
+        self._gfu_client = gfu_client
 
     def run_user_genome_to_tsv(self,genome_ref,output_filename):
         # Load genome object into object_hash
@@ -178,7 +179,7 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
             "description": "Annotations from KBDatalakeApps build_genome_datalake_tables pipeline",
             "input_ws_objects": list(genome_refs),
             "method": "build_genome_datalake_tables",
-            "method_params": [{"database_filename": database_filename}],
+            "method_params": [{"input_refs": genome_refs}],
             "service": "KBDatalakeApps",
             "service_ver": "0.0.1",
         }]
@@ -272,6 +273,8 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
             # Inject the pre-built dfu_client from the Impl
             if self._dfu_client:
                 anno_util.set_callback_client("DataFileUtil", self._dfu_client)
+            if self._gfu_client:
+                anno_util.set_callback_client("GenomeFileUtil", self._gfu_client)
 
             # Save annotated genome using add_annotation_ontology_events
             print(f"Saving annotated genome: {output_name} ({len(events)} ontology events)")
