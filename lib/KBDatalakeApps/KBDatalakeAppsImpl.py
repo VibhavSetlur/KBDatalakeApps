@@ -28,7 +28,7 @@ from annotation.annotation import test_annotation, run_rast, run_kofam
 from executor.task_executor import TaskExecutor
 from executor.task import task_rast, task_kofam, task_psortb, task_bakta
 from KBDatalakeApps.KBDatalakeUtils import KBDataLakeUtils, generate_ontology_tables
-from KBDatalakeApps.utils import upload_blob_file, print_path
+from KBDatalakeApps.utils import upload_blob_file, print_path, get_classifier, read_rast_as_genome
 
 # Import KBUtilLib utilities for common functionality
 #from kbutillib import KBWSUtils, KBCallbackUtils, SharedEnvUtils
@@ -391,10 +391,6 @@ Author: chenry
                     tasks_input_genome.append(executor.run_task(task_bakta,
                                                                 path_user_genome / filename_faa,
                                                                 self.kb_bakta))
-                    tasks_input_genome.append(executor.run_task(task_psortb,
-                                                                path_user_genome / filename_faa,
-                                                                '-n',  # FIXME: predict template class first to select proper flag
-                                                                self.kb_psortb))
 
         path_pangenome = path_root / "pangenome"
         path_pangenome.mkdir(parents=True, exist_ok=True)
@@ -427,6 +423,22 @@ Author: chenry
         for t in tasks_rast:
             print(f'await for {t.args} {t.status}')
             t.wait()
+
+        if not skip_annotation:
+            template_classifier = get_classifier()
+            if template_classifier is not None:
+                for filename_faa in path_user_genome.iterdir():
+                    if str(filename_faa).endswith('.faa'):
+                        filename_faa_rast = Path(filename_faa.stem + '_rast.tsv')
+                        if filename_faa_rast.exists():
+                            print(f'found {filename_faa} with RAST: {filename_faa_rast}')
+                            genome = read_rast_as_genome(filename_faa_rast)
+                            res = template_classifier.classify(genome)
+                            print(filename_faa, res)
+                            tasks_input_genome.append(executor.run_task(task_psortb,
+                                                                        path_user_genome / filename_faa,
+                                                                        '-n',  # FIXME: predict template class first to select proper flag
+                                                                        self.kb_psortb))
 
         if not skip_modeling_pipeline:
             model_params = {

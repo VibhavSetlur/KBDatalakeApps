@@ -1,7 +1,11 @@
 import os
 import requests
 from pathlib import Path
-
+from modelseedpy.core.msgenomeclassifier import MSGenomeClassifier
+from modelseedpy.core.msgenome import MSFeature, MSGenome
+import pandas as pd
+import pickle
+import json
 
 def human_size(size):
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -99,3 +103,36 @@ def upload_blob_file(filepath, token, shock_url, hs_client):
 
     print(f"File uploaded to Shock: {shock_id}, Handle: {handle_id}")
     return shock_id, handle_id
+
+def get_classifier() -> MSGenomeClassifier:
+
+    path_cls_pickle = Path('/data/reference_data/modeling/knn_ACNP_RAST_full_01_17_2023.pickle')
+    path_cls_features = Path('/data/reference_data/modeling/knn_ACNP_RAST_full_01_17_2023_features.json')
+
+    if not path_cls_pickle.exists() or not path_cls_features.exists():
+        return None
+
+    with open(path_cls_pickle, "rb") as fh: 
+        model_filter = pickle.load(fh)
+    with open(path_cls_features, "r") as fh: 
+        features = json.load(fh)
+    
+    clf = MSGenomeClassifier(model_filter, features)
+    return clf
+
+
+def read_rast_as_genome(filename_rast, genome_id, ontology_term_rast='RAST') -> MSGenome:
+    d_rast = pd.read_csv(filename_rast, sep='\t', index_col=0).to_dict()[ontology_term_rast]
+    genome = MSGenome()
+    genome.id = genome_id
+    genome.scientific_name = genome_id
+    features = []
+    for feature_id, rast_str in d_rast.items():
+        feature = MSFeature(feature_id, "")
+        if not pd.isna(rast_str):
+            for v in rast_str.split('; '):
+                feature.add_ontology_term('RAST', v)
+        features.append(feature)
+    genome.add_features(features)
+
+    return genome
