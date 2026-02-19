@@ -428,9 +428,11 @@ Author: chenry
 
         if not skip_annotation:
             template_classifier = get_classifier()
+            print(f'loaded classifier {template_classifier}')
             if template_classifier is not None:
                 for filename_faa in path_user_genome.iterdir():
                     if str(filename_faa).endswith('.faa'):
+                        print(f'found faa {filename_faa}')
                         filename_faa_rast = Path(filename_faa.stem + '_rast.tsv')
                         if filename_faa_rast.exists():
                             print(f'found {filename_faa} with RAST: {filename_faa_rast}')
