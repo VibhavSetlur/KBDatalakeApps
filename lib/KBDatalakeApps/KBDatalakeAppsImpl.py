@@ -88,9 +88,13 @@ Author: chenry
                 for i in genome_set.elements.values():
                     info = kbase_api.get_object_info(i['ref'])
                     genome_refs[str(info)] = info.id
+            elif info.type == 'KBaseSets.GenomeSet':
+                genome_set = kbase_api.get_from_ws(str(info))
+                for i in genome_set.items:
+                    info = kbase_api.get_object_info(i['ref'])
+                    genome_refs[str(info)] = info.id
             else:
                 raise ValueError(f'bad input ref type: {info.type}')
-            print(info.id, info.type)
         return genome_refs
 
     @staticmethod
@@ -301,6 +305,7 @@ Author: chenry
         skip_genome_pipeline = params['skip_genome_pipeline'] == 1
         skip_modeling_pipeline = params['skip_modeling_pipeline'] == 1
         export_all_data = params['export_all_content'] == 1
+        export_pangenome_data = params['export_pangenome_data'] == 1
         export_genome_data = params['export_genome_data'] == 1
         export_databases = params['export_databases'] == 1
         export_folder_models = params['export_folder_models'] == 1
@@ -508,19 +513,23 @@ Author: chenry
         print_path(path_root.resolve())
 
         # Save annotated genomes back to workspace from each clade's database
+        genome_set_items = []
         if not skip_save_genome_annotation:
             for folder_pangenome in os.listdir(str(path_pangenome)):
                 if os.path.isdir(f'{path_pangenome}/{folder_pangenome}'):
                     path_db_file = path_root / 'pangenome' / folder_pangenome / 'db.sqlite'
                     if path_db_file.exists():
                         print(f'Saving annotated genomes from {folder_pangenome} database')
-                        self.util.save_annotated_genomes(
+                        saved_items = self.util.save_annotated_genomes(
                             genome_refs=list(genome_refs.keys()),
                             suffix=suffix,
                             output_workspace=workspace_name,
-                            genomeset_name=f"annotated_genomes_{suffix}",
                             database_filename=str(path_db_file),
                         )
+                        genome_set_items += saved_items['items']
+
+        ref_genome_set = self.util.save_genome_set(f"annotated_genomes_{suffix}",
+                                                   genome_set_items, workspace_name)
 
         # Safe to read and export data
         file_links = []
@@ -584,25 +593,50 @@ Author: chenry
                         'label': 'Phenotypes Folder',
                         'description': 'debug'
                     })
+
+        if export_pangenome_data:
+            for folder_pangenome in path_pangenome.iterdir():
+                if folder_pangenome.is_dir():
+                    path_mmseqs_tmp = folder_pangenome / 'master_mmseqs2' / 'mmseqs2_tmp'
+                    if os.path.exists(path_mmseqs_tmp):
+                        shutil.rmtree(path_mmseqs_tmp)
+                    name = folder_pangenome.name
+                    print(f'found db for {folder_pangenome}')
+                    archive_shock_id = self.dfu.file_to_shock({
+                        'file_path': str(folder_pangenome),
+                        'pack': 'zip'
+                    })['shock_id']
+                    file_links.append({
+                        'shock_id': archive_shock_id,
+                        'name': f'{name}.zip',
+                        'label': f'{name} pangenome folder',
+                        'description': f'{name} clade folder'
+                    })
+
         if export_databases:
+            path_export = path_root / 'export'
+            path_export.mkdir(exist_ok=True)
+            to_shock = {}
             for folder_pangenome in os.listdir(str(path_pangenome)):
-                path_mmseqs_tmp = path_pangenome / folder_pangenome / 'master_mmseqs2' / 'mmseqs2_tmp'
-                if os.path.exists(path_mmseqs_tmp):
-                    shutil.rmtree(path_mmseqs_tmp)
                 if os.path.isdir(f'{path_pangenome}/{folder_pangenome}'):
-                    path_db = (path_pangenome / folder_pangenome / 'db.sqlite').resolve()
-                    if path_db.exists():
-                        print(f'found db for {folder_pangenome}! file_to_shock: {path_db}')
-                        archive_shock_id = self.dfu.file_to_shock({
-                            'file_path': str(path_db),
-                            'pack': 'zip'
-                        })['shock_id']
-                        file_links.append({
-                            'shock_id': archive_shock_id,
-                            'name': f'{folder_pangenome}.zip',
-                            'label': f'{folder_pangenome} database',
-                            'description': f'{folder_pangenome} clade database'
-                        })
+                    path_export_db = path_export / folder_pangenome
+                    path_export_db.mkdir(exist_ok=True)
+                    path_filename_db = (path_pangenome / folder_pangenome / 'db.sqlite').resolve()
+                    if path_filename_db.exists():
+                        shutil.copy2(path_filename_db, path_export_db / path_filename_db.name)
+                        to_shock[folder_pangenome] = path_export_db
+            for folder_pangenome, path_export_db in to_shock.items():
+                print(f'file_to_shock: {path_export_db}')
+                archive_shock_id = self.dfu.file_to_shock({
+                    'file_path': str(path_export_db),
+                    'pack': 'zip'
+                })['shock_id']
+                file_links.append({
+                    'shock_id': archive_shock_id,
+                    'name': f'{folder_pangenome}.zip',
+                    'label': f'{folder_pangenome} database',
+                    'description': f'{folder_pangenome} clade database'
+                })
 
         pangenome_data_list = []
         for folder_pangenome in os.listdir(str(path_pangenome)):
@@ -629,7 +663,7 @@ Author: chenry
         output_object = {
             'name': output_object_name,
             'description': '',
-            'genomeset_ref': '77057/3/1',
+            'genomeset_ref': ref_genome_set,
             'pangenome_data': pangenome_data_list,
         }
         saved_object_info = self.kbase_api.save_object(output_object_name,

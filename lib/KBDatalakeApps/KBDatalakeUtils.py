@@ -138,7 +138,7 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
             num_noncoding
         ]
 
-    def save_annotated_genomes(self, genome_refs, suffix, output_workspace, genomeset_name, database_filename):
+    def save_annotated_genomes(self, genome_refs, suffix, output_workspace, database_filename):
         """
         Save annotated genomes back to KBase with ontology events from the SQLite database,
         then create a GenomeSet referencing all saved genomes.
@@ -305,7 +305,7 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
                 print(f"  Warning: No output_ref returned for {output_name}")
 
         conn.close()
-
+        """
         # Save GenomeSet referencing all saved genomes
         genomeset_ref = None
         if saved_genome_items:
@@ -321,11 +321,30 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
             print(f"  GenomeSet saved as {genomeset_ref}")
         else:
             print("Warning: No genomes were saved, skipping GenomeSet creation")
-
+        """
         return {
             "genome_refs": saved_genome_refs,
-            "genomeset_ref": genomeset_ref,
+            "items": saved_genome_items,
         }
+
+    def save_genome_set(self, object_name, items: list, output_workspace):
+        # Save GenomeSet referencing all saved genomes
+        ref = None
+        if items:
+            genomeset_data = {
+                "description": f"Annotated genomes from KBDatalakeApps pipeline ({len(items)} genomes)",
+                "items": items,
+            }
+            print(f"Saving GenomeSet: {object_name} ({len(items)} genomes)")
+            save_result = self.save_ws_object(
+                object_name, output_workspace, genomeset_data, "KBaseSets.GenomeSet"
+            )
+            ref = self.wsinfo_to_ref(save_result[0])
+            print(f"  GenomeSet saved as {ref}")
+        else:
+            print("Warning: No genomes were saved, skipping GenomeSet creation")
+
+        return ref
 
     def build_phenotype_tables(self, output_dir, phenosim_directory,
                                experiment_data_file=None, phenoset_file=None,
