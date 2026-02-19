@@ -305,6 +305,9 @@ Author: chenry
         genome_to_ref = validate_genome_refs(genome_refs_all)
         print('Genome To Ref:', genome_to_ref)
 
+        messages = []
+        warnings = []
+
         # Validate required parameters
         self._validate_params(params, ['input_refs', 'workspace_name'])
 
@@ -350,8 +353,10 @@ Author: chenry
                     if len(clade_to_input_genomes) < param_clade_limit:
                         clade_to_input_genomes[clade] = set()
                     else:
+                        warnings.append(f'WARNING CLADE LIMIT REACHED. Genome -> Clade skip. {genome_name} -> {clade}')
                         print(f'WARNING CLADE LIMIT REACHED. Genome -> Clade skip. {genome_name} -> {clade}')
                 if clade in clade_to_input_genomes:
+                    messages.append(f'Clade Match: {genome_name} -> {clade}')
                     clade_to_input_genomes[clade].add(genome_name)
                     genome_refs[genome_to_ref[genome_name]] = genome_name
                 else:
@@ -370,23 +375,28 @@ Author: chenry
         path_user_genome.mkdir(parents=True, exist_ok=True)
         tasks_input_genome = []
         tasks_rast = []
+        genome_allowed = {'user_' + g for g in genome_refs.values()}
         for filename_faa in path_user_genome.glob("*.faa"):
             genome_name = filename_faa.stem
             print(f'found protein faa {genome_name} -> {filename_faa}')
             if skip_annotation:
                 print('skip_annotation')
             else:
-                if genome_name in set(genome_refs.values()):
+                if genome_name in genome_allowed:
+                    messages.append(f'Run annotation RAST: {filename_faa}')
                     th = executor.run_task(task_rast, path_user_genome / filename_faa, self.rast_client)
                     tasks_rast.append(th)
                     tasks_input_genome.append(th)
+                    messages.append(f'Run annotation KOFAM: {filename_faa}')
                     tasks_input_genome.append(executor.run_task(task_kofam,
                                                                 path_user_genome / filename_faa,
                                                                 self.kb_kofam))
+                    messages.append(f'Run annotation BAKTA: {filename_faa}')
                     tasks_input_genome.append(executor.run_task(task_bakta,
                                                                 path_user_genome / filename_faa,
                                                                 self.kb_bakta))
                 else:
+                    warnings.append(f"Skip annotation for: {genome_name}")
                     print(f'skip genome: {genome_name}')
 
         path_pangenome = path_root / "pangenome"
@@ -434,6 +444,7 @@ Author: chenry
                             print(f'found {filename_faa} with RAST: {filename_faa_rast}')
                             genome = read_rast_as_genome(filename_faa_rast)
                             res = template_classifier.classify(genome)
+                            messages.append(f'Genome Type Class: {filename_faa} -> {res}')
                             print(filename_faa, res)
                             tasks_input_genome.append(executor.run_task(task_psortb,
                                                                         path_user_genome / filename_faa,
@@ -529,7 +540,8 @@ Author: chenry
                         genome_set_items += saved_items['items']
 
         print(f'saved items: {genome_set_items}')
-
+        if len(genome_set_items) == 0:
+            genome_set_items = [{"ref": ref, "label": ref} for ref in genome_refs]
         ref_genome_set = self.util.save_genome_set(f"annotated_genomes_{suffix}",
                                                    genome_set_items, workspace_name)
 
