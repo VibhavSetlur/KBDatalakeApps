@@ -192,7 +192,7 @@ class DatalakeTableBuilder:
                 df = pl.read_csv(genome_root / f, separator='\t')
                 self._update_ontology(feature_ontology_terms, df)
 
-        path_rast = genome_root / f'user_{genome_id}_rast.tsv'
+        path_rast = genome_root / f'{genome_id}_rast.tsv'
         if path_rast.exists():
             print(f'collecting {path_rast}')
             df = pl.read_csv(path_rast, separator='\t')
