@@ -347,7 +347,7 @@ Author: chenry
 
             for genome_name, clade in input_genome_to_clade.items():
                 if clade not in clade_to_input_genomes:
-                    if len(clade_to_input_genomes[clade]) <= param_clade_limit:
+                    if len(clade_to_input_genomes) < param_clade_limit:
                         clade_to_input_genomes[clade] = set()
                     else:
                         print(f'WARNING CLADE LIMIT REACHED. Genome -> Clade skip. {genome_name} -> {clade}')
