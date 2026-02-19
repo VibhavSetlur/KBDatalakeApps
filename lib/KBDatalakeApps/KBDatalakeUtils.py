@@ -331,13 +331,13 @@ class KBDataLakeUtils(KBGenomeUtils, MSReconstructionUtils, MSFBAUtils):
         # Save GenomeSet referencing all saved genomes
         ref = None
         if items:
-            genomeset_data = {
+            _data = {
                 "description": f"Annotated genomes from KBDatalakeApps pipeline ({len(items)} genomes)",
-                "items": items,
+                "elements": {item['ref']: {'ref': item['ref']} for item in items},
             }
             print(f"Saving GenomeSet: {object_name} ({len(items)} genomes)")
             save_result = self.save_ws_object(
-                object_name, output_workspace, genomeset_data, "KBaseSets.GenomeSet"
+                object_name, output_workspace, _data, "KBaseSearch.GenomeSet"
             )
             ref = self.wsinfo_to_ref(save_result[0])
             print(f"  GenomeSet saved as {ref}")
